@@ -35,7 +35,7 @@ def GetModelYaml(task):
     if task == "detect":
         return "yolov8n.yaml"
     elif task == "pose":
-        return "yolov8n-pose.yaml"
+        return "yolov8n-pose-verdant.yaml"
     print(f"Unknown task {task}")
     return None
 

@@ -418,7 +418,10 @@ def entrypoint(debug=''):
         from ultralytics import YOLO
         model = YOLO(model, task=task)
     if isinstance(overrides.get('pretrained'), str):
+        LOGGER.info(f"Loading weights from {overrides['pretrained']}")
         model.load(overrides['pretrained'])
+    else:
+        LOGGER.info(f"Not loading pretrained weights")
 
     # Task Update
     if task != model.task:
