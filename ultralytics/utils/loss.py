@@ -624,19 +624,83 @@ class v8PoseContrastiveLoss(v8PoseLoss):
 
             # find unique classes
             uniq_classes = torch.unique(targets)
-            if len(uniq_classes) < 2:  # skip if there are not enough classes to make a triplet (it's ok to have query and positive samples from the same class)
+
+            # if len(uniq_classes) < 2:  # skip if there are not enough classes to make a triplet (it's ok to have query and positive samples from the same class)
+            #     continue
+            
+            # # pull random indices (ok to be redundant) for query, positive, and negative
+            # n_samples = self.n_samples
+            # query_class_indices = torch.randint(0, len(uniq_classes), (n_samples,))  # query class indices (n_samples,)
+            # neg_class_indices = torch.randint(0, len(uniq_classes) - 1, (n_samples,))  # negative class indices (n_samples,)
+            # neg_class_indices[neg_class_indices >= query_class_indices] += 1  # ensure each negative class index is different from a corresponding query class index (n_samples,)
+            
+            # def select_rand_idx_per_class(targets, class_indices):
+            #     """
+            #     Select random indices per class from the target labels.
+            #     """
+            #     # fetch the actual class labels for the given class indices
+            #     class_labels = uniq_classes[class_indices]  # (n_samples,)
+            #     # create a boolean mask where each row shows which target label == class label
+            #     mask = targets.unsqueeze(0) == class_labels.unsqueeze(1)  # (n_samples, n_matches)
+            #     # convert mask to float for torch.multinomial
+            #     probs = mask.float()
+            #     # take one index per row (target labels) where mask is True
+            #     selected_indices = torch.multinomial(probs, num_samples=1).squeeze(1)  # (n_samples,)
+            #     return selected_indices
+
+            # query_indices = select_rand_idx_per_class(targets, query_class_indices)  # query sample indices (n_samples,)
+            # pos_indices = select_rand_idx_per_class(targets, query_class_indices)  # positive sample indices (n_samples,)
+            # neg_indices = select_rand_idx_per_class(targets, neg_class_indices)  # negative sample indices (n_samples,)
+
+            # # extract embeddings for query, positive, and negative samples
+            # embs_query = embs[query_indices]  # query embeddings  (n_samples, n_features) 
+            # embs_pos = embs[pos_indices]  # positive embeddings  (n_samples, n_features)
+            # embs_neg = embs[neg_indices]  # negative embeddings  (n_samples, n_features)
+
+            # # compute triplet loss (vectorization method)
+            # # equivalent to this brute force method:
+            # # for i in range(n_samples):
+            # #   triplets = (embs_query[i], embs_pos[i], embs_neg[i])  # embeddings for query, positive, and negative samples
+            # #   logit = torch.dot(triplets[0], (triplets[1] - triplets[2]))  # dot(query, pos) - dot(query, neg)
+            # #   y = torch.ones_like(logit)  # (n_samples,)
+            # #   triplet_loss += F.binary_cross_entropy_with_logits(logit, y)
+            # diff = embs_pos - embs_neg  # (n_samples, n_features)
+            # logits = torch.sum(embs_query * diff, dim=1)  # (n_samples,)
+            # logits_avg += logits.mean().item()
+            # y = torch.ones_like(logits)  # y is always 1 if we consider (query, pos) as a positive pair; (n_samples,)
+            # triplet_loss += F.binary_cross_entropy_with_logits(logits, y, reduction='sum') / n_samples  # normalize by number of samples
+            
+            ############################################################# TESTING ######################################################################
+
+            # skip if there are not enough classes to make a triplet (it's ok to have query and positive samples from the same class)
+            if len(uniq_classes) < 3:  # 3 because class 0 (fully unknown) won't be used in the triplet loss
                 continue
-            
-            # pull random indices (ok to be redundant) for query, positive, and negative
+
             n_samples = self.n_samples
-            query_class_indices = torch.randint(0, len(uniq_classes), (n_samples,))  # query class indices (n_samples,)
-            neg_class_indices = torch.randint(0, len(uniq_classes) - 1, (n_samples,))  # negative class indices (n_samples,)
-            neg_class_indices[neg_class_indices >= query_class_indices] += 1  # ensure each negative class index is different from a corresponding query class index (n_samples,)
             
-            def select_rand_idx_per_class(targets, class_indices):
+            # crop species: <-1
+            uniq_crop_classes = torch.tensor(list(filter(lambda x: x < -1, uniq_classes)))  # unique crop classes
+            crop_class_indices = torch.tensor([torch.where(uniq_classes == x)[0][0] for x in uniq_crop_classes])
+
+            # unknown crop: -1
+            unknown_crop_class_index = torch.where(uniq_classes == -1)[0][0]
+
+            # fully unknown: 0
+            fully_unknown_class_index = torch.where(uniq_classes == 0)[0][0]  # won't be used in the triplet loss
+
+            # unknown weed: +1
+            unknown_weed_class_index = torch.where(uniq_classes == 1)[0][0]
+
+            # weed species: >+1
+            uniq_weed_classes = torch.tensor(list(filter(lambda x: x > 1, uniq_classes)))
+            weed_class_indices = torch.tensor([torch.where(uniq_classes == x)[0][0] for x in uniq_weed_classes])
+
+            def select_rand_idx_per_class(n_samples, targets, class_index):
                 """
-                Select random indices per class from the target labels.
+                Select n_samples of random indices from the target labels for a given class.
                 """
+                # sample up class index
+                class_indices = torch.tensor([class_index] * n_samples)
                 # fetch the actual class labels for the given class indices
                 class_labels = uniq_classes[class_indices]  # (n_samples,)
                 # create a boolean mask where each row shows which target label == class label
@@ -647,27 +711,97 @@ class v8PoseContrastiveLoss(v8PoseLoss):
                 selected_indices = torch.multinomial(probs, num_samples=1).squeeze(1)  # (n_samples,)
                 return selected_indices
             
-            query_indices = select_rand_idx_per_class(targets, query_class_indices)  # query sample indices (n_samples,)
-            pos_indices = select_rand_idx_per_class(targets, query_class_indices)  # positive sample indices (n_samples,)
-            neg_indices = select_rand_idx_per_class(targets, neg_class_indices)  # negative sample indices (n_samples,)
+            def make_indices(n_samples, targets, uniq_classes_of_type, class_index):
+                # make indices for triplets (either query, positive, or negative)
+                indices = select_rand_idx_per_class(n_samples, targets, uniq_classes_of_type, class_index)  # query sample indices (n_samples,)
+                return indices
+            
+            # make triplets for each case
+            """
+                crop-i, crop-i, weed-j (common)
+                crop-i, crop-i, crop-k (rare)
+                crop-i, crop-i, unknown-weed (common for data not labeled with weed species)
+                weed-j, weed-j, crop-i (common)
+                weed-j, weed-j, weed-k (common)
+                weed-j, weed-j, unknown-crop (very rare)
+                unknown-weed, itself, crop-i (common for data not labeled with weed species)
+                unknown-crop, itself, weed-j (very rare)
+            """
+            import itertools
+            triplets = []
+            # # case1: (crop i, crop i, weed j)
+            for crop_class_index, weed_class_index in itertools.product(crop_class_indices, weed_class_indices):
+                query = make_indices(n_samples, targets, crop_class_index)  # (n_samples,)
+                pos = make_indices(n_samples, targets, crop_class_index)  # (n_samples,)
+                neg = make_indices(n_samples, targets, weed_class_index)  # (n_samples,)
+                triplets.append((query, pos, neg))  # append (n_samples,) indices for query, positive, and negative samples
+            # # case2: (crop i, crop i, crop k) crop i and crop k must be different
+            for crop1_class_index, crop2_class_index in itertools.combinations(crop_class_indices, 2):
+                query = make_indices(n_samples, targets, crop1_class_index)
+                pos = make_indices(n_samples, targets, crop1_class_index)
+                neg = make_indices(n_samples, targets, crop2_class_index)
+                triplets.append((query, pos, neg))
+            # # case3: (crop i, crop i, unknown weed)
+            for crop_class_index in crop_class_indices:
+                query = make_indices(n_samples, targets, crop_class_index)
+                pos = make_indices(n_samples, targets, crop_class_index)
+                neg = make_indices(n_samples, targets, unknown_weed_class_index)
+                triplets.append((query, pos, neg))
+            # # case4: (weed j, weed j, crop i)
+            for weed_class_index, crop_class_index in itertools.product(weed_class_indices, crop_class_indices):
+                query = make_indices(n_samples, targets, weed_class_index)
+                pos = make_indices(n_samples, targets, weed_class_index)
+                neg = make_indices(n_samples, targets, crop_class_index)
+                triplets.append((query, pos, neg))
+            # # case5: (weed j, weed j, weed k) weed j and weed k must be different
+            for weed1_class_index, weed2_class_index in itertools.combinations(weed_class_indices, 2):
+                query = make_indices(n_samples, targets, weed1_class_index)
+                pos = make_indices(n_samples, targets, weed1_class_index)
+                neg = make_indices(n_samples, targets, weed2_class_index)
+                triplets.append((query, pos, neg))
+            # # case6: (weed j, weed j, unknown crop)
+            for weed_class_index in weed_class_indices:
+                query = make_indices(n_samples, targets, weed_class_index)
+                pos = make_indices(n_samples, targets, weed_class_index)
+                neg = make_indices(n_samples, targets, unknown_crop_class_index)
+                triplets.append((query, pos, neg))
+            # # case7: (unknown weed, itself, crop i)
+            for crop_class_index in crop_class_indices:
+                query = make_indices(n_samples, targets, unknown_weed_class_index)
+                pos = query
+                neg = make_indices(n_samples, targets, crop_class_index)
+                triplets.append((query, pos, neg))
+            # # case8: (unknown crop, itself, weed j)
+            for weed_class_index in weed_class_indices:
+                query = make_indices(n_samples, targets, unknown_crop_class_index)
+                pos = query
+                neg = make_indices(n_samples, targets, weed_class_index)
+                triplets.append((query, pos, neg))
 
             # extract embeddings for query, positive, and negative samples
-            embs_query = embs[query_indices]  # query embeddings  (n_samples, n_features) 
-            embs_pos = embs[pos_indices]  # positive embeddings  (n_samples, n_features)
-            embs_neg = embs[neg_indices]  # negative embeddings  (n_samples, n_features)
-
+            query_indices = torch.cat([triplet[0] for triplet in triplets])  # query sample indices (k*n_samples,) where k is num_cases * sum_iterations_of_for_loops
+            pos_indices = torch.cat([triplet[1] for triplet in triplets])  # positive sample indices (k*n_samples,)
+            neg_indices = torch.cat([triplet[2] for triplet in triplets])  # negative sample indices (k*n_samples,)
+            
+            # extract embeddings for query, positive, and negative samples
+            embs_query = embs[query_indices]  # query embeddings
+            embs_pos = embs[pos_indices]  # positive embedding
+            embs_neg = embs[neg_indices]  # negative embeddings
+            
             # compute triplet loss (vectorization method)
             # equivalent to this brute force method:
-            # for i in range(n_samples):
+            # for i in range(k*n_samples):
             #   triplets = (embs_query[i], embs_pos[i], embs_neg[i])  # embeddings for query, positive, and negative samples
             #   logit = torch.dot(triplets[0], (triplets[1] - triplets[2]))  # dot(query, pos) - dot(query, neg)
-            #   y = torch.ones_like(logit)  # (n_samples,)
+            #   y = torch.ones_like(logit)  # (k*n_samples,)
             #   triplet_loss += F.binary_cross_entropy_with_logits(logit, y)
-            diff = embs_pos - embs_neg  # (n_samples, n_features)
-            logits = torch.sum(embs_query * diff, dim=1)  # (n_samples,)
+            diff = embs_pos - embs_neg  # (k*n_samples, n_features)
+            logits = torch.sum(embs_query * diff, dim=1)  # (k*n_samples,)
             logits_avg += logits.mean().item()
-            y = torch.ones_like(logits)  # y is always 1 if we consider (query, pos) as a positive pair; (n_samples,)
+            y = torch.ones_like(logits)  # y is always 1 if we consider (query, pos) as a positive pair; (k*n_samples,)
             triplet_loss += F.binary_cross_entropy_with_logits(logits, y, reduction='sum') / n_samples  # normalize by number of samples
+
+            ############################################################################################################################################
 
         # compute triplet loss
         triplet_loss /= batch_size
