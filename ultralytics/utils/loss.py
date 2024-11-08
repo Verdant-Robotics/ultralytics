@@ -677,21 +677,21 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             # skip if there are not enough classes to make a triplet (it's ok to have query and positive samples from the same class)
             if len(uniq_classes[uniq_classes != 0]) < 2:  # note that class 0 won't be used in the triplet loss
                 continue
-            
-            # crop species: <-1
-            uniq_crop_classes = torch.tensor(list(filter(lambda x: x < -1, uniq_classes)))  # unique crop classes
-
-            # unknown crop: -1
-            unknown_crop_class = -1
 
             # fully unknown: 0
             fully_unknown_class = 0  # won't be used in the triplet loss
+            
+            # crop species: 1 <= x <= 9
+            uniq_crop_classes = torch.tensor(list(filter(lambda x: 1 <= x <= 9, uniq_classes)))  # unique crop classes
 
-            # unknown weed: +1
-            unknown_weed_class = 1
+            # unknown crop: 10
+            unknown_crop_class = 10
 
-            # weed species: >+1
-            uniq_weed_classes = torch.tensor(list(filter(lambda x: x > 1, uniq_classes)))
+            # weed species: 11 <= x <= 19
+            uniq_weed_classes = torch.tensor(list(filter(lambda x: 11 <= x <= 19, uniq_classes)))  # unique weed classes
+
+            # unknown weed: 20
+            unknown_weed_class = 20
 
             def select_rand_idx(n_samples, targets, class_label):
                 """
@@ -707,11 +707,11 @@ class v8PoseContrastiveLoss(v8PoseLoss):
 
                 Example:
                 n_samples = 3, class_label = 2
-                === n_samples x n_matches ===
-                    -5 -2 -1 0 1 2 2 5      <- targets
-                    -5 -2 -1 0 1 2 2 5      <- targets
-                    -5 -2 -1 0 1 2 2 5      <- targets
-                =============================
+                == n_samples x n_matches ==
+                    3 0 1 4 5 2 2 1     <- targets
+                    3 0 1 4 5 2 2 1     <- targets
+                    3 0 1 4 5 2 2 1     <- targets
+                ===========================
                             ...
                     =================
                     0 0 0 0 0 1 1 0  <- masked targets (by class_label)
