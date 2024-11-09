@@ -777,6 +777,9 @@ class v8PoseContrastiveLoss(v8PoseLoss):
                 for weed_class in uniq_weed_classes:
                     class_pairs.extend([(weed_class, unknown_crop_class, False), (unknown_crop_class, weed_class, True)])
 
+            if not class_pairs:
+                continue
+
             # sample random n pairs
             n_samples = self.n_samples
             pair_samples = [class_pairs[i] for i in torch.randint(0, len(class_pairs), (n_samples,))]  # redundant pairs are allowed
