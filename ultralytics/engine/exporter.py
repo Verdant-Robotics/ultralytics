@@ -238,7 +238,7 @@ class Exporter:
             'batch': self.args.batch,
             'imgsz': self.imgsz,
             'names': model.names}  # model metadata
-        if model.task == 'pose':
+        if model.task in {'pose', 'pose-contrastive'}:
             self.metadata['kpt_shape'] = model.model[-1].kpt_shape
 
         LOGGER.info(f"\n{colorstr('PyTorch:')} starting from '{file}' with input shape {tuple(im.shape)} BCHW and "
