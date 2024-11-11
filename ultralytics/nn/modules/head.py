@@ -138,8 +138,9 @@ class DetectContrastive(nn.Module):
             bboxes = self.cv2[i](x[i])  # (B, 4 * reg_max, H, W)
             
             # split embeddings by first half for classification and second half for contrastive task
-            embeddings_cls = self.embedding_layers[i](x[i])[:, :self.c3, :, :]  # (B, n_features for cls, H, W)
-            embeddings_contrastive = self.embedding_layers[i](x[i])[:, self.c3:, :, :]  # (B, n_features for contrastive learning, H, W)
+            full_embedding = self.embedding_layers[i](x[i])
+            embeddings_cls = full_embedding[:, :self.c3, :, :]  # (B, n_features for cls, H, W)
+            embeddings_contrastive = full_embedding[:, self.c3:, :, :]  # (B, n_features for contrastive learning, H, W)
             cls_predictions = self.cls_preds[i](embeddings_cls)  # (B, nc, H, W)
             x[i] = torch.cat((bboxes, cls_predictions, embeddings_contrastive), 1)  # (B, 4 * reg_max + nc + n_features for contrastive learning, H, W) == (B, no, H, W)
             
