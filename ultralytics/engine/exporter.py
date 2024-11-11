@@ -65,8 +65,8 @@ from ultralytics.cfg import get_cfg
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.nn.autobackend import check_class_names
-from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder
-from ultralytics.nn.tasks import DetectionModel, SegmentationModel
+from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder, DetectContrastive
+from ultralytics.nn.tasks import DetectionModel, SegmentationModel, PoseContrastiveModel
 from ultralytics.utils import (ARM64, DEFAULT_CFG, LINUX, LOGGER, MACOS, ROOT, WINDOWS, __version__, callbacks,
                                colorstr, get_default_args, yaml_save)
 from ultralytics.utils.checks import check_imgsz, check_requirements, check_version
@@ -199,7 +199,7 @@ class Exporter:
         model.float()
         model = model.fuse()
         for m in model.modules():
-            if isinstance(m, (Detect, RTDETRDecoder)):  # Segment and Pose use Detect base class
+            if isinstance(m, (Detect, DetectContrastive, RTDETRDecoder)):  # Segment and Pose use Detect base class
                 m.dynamic = self.args.dynamic
                 m.export = True
                 m.format = self.args.format
@@ -320,13 +320,22 @@ class Exporter:
         LOGGER.info(f'\n{prefix} starting export with onnx {onnx.__version__} opset {opset_version}...')
         f = str(self.file.with_suffix('.onnx'))
 
-        output_names = ['output0', 'output1'] if isinstance(self.model, SegmentationModel) else ['output0']
+        if isinstance(self.model, SegmentationModel):
+            output_names = ['output0', 'output1']
+        elif isinstance(self.model, PoseContrastiveModel):
+            print('Exporting pose contrastive model')
+            output_names = ['output0', 'embeddings']
+        else:
+            output_names = ['output0']
         dynamic = self.args.dynamic
         if dynamic:
             dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'}}  # shape(1,3,640,640)
             if isinstance(self.model, SegmentationModel):
                 dynamic['output0'] = {0: 'batch', 2: 'anchors'}  # shape(1, 116, 8400)
                 dynamic['output1'] = {0: 'batch', 2: 'mask_height', 3: 'mask_width'}  # shape(1,32,160,160)
+            elif isinstance(self.model, PoseContrastiveModel):
+                dynamic['output0'] = {0: 'batch', 2: 'anchors'}  # shape(1, 84, 8400)
+                dynamic['embeddings'] = {0: 'batch', 2: 'anchors'}
             elif isinstance(self.model, DetectionModel):
                 dynamic['output0'] = {0: 'batch', 2: 'anchors'}  # shape(1, 84, 8400)
 

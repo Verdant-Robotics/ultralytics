@@ -140,7 +140,7 @@ class DetectContrastive(nn.Module):
             # split embeddings by first half for classification and second half for contrastive task
             full_embedding = self.embedding_layers[i](x[i])
             embeddings_cls = full_embedding[:, :self.c3, :, :]  # (B, n_features for cls, H, W)
-            embeddings_contrastive = full_embedding[:, self.c3:, :, :]  # (B, n_features for contrastive learning, H, W)
+            embeddings_contrastive = full_embedding[:, self.c3:(self.c3 + self.c3_cls_contrastive), :, :]  # (B, n_features for contrastive learning, H, W)
             cls_predictions = self.cls_preds[i](embeddings_cls)  # (B, nc, H, W)
             x[i] = torch.cat((bboxes, cls_predictions, embeddings_contrastive), 1)  # (B, 4 * reg_max + nc + n_features for contrastive learning, H, W) == (B, no, H, W)
             
@@ -154,8 +154,9 @@ class DetectContrastive(nn.Module):
         if self.export and self.format in ('saved_model', 'pb', 'tflite', 'edgetpu', 'tfjs'):  # avoid TF FlexSplitV ops
             box = x_cat[:, :self.reg_max * 4]
             cls = x_cat[:, self.reg_max * 4: self.reg_max * 4 + self.nc]
+            emb = x_cat[:, self.reg_max * 4 + self.nc:self.no]
         else:
-            box, cls, _ = x_cat.split((self.reg_max * 4, self.nc, (self.no - self.reg_max * 4 - self.nc)), 1)  # box, cls, embeddings
+            box, cls, emb = x_cat.split((self.reg_max * 4, self.nc, self.c3_cls_contrastive), 1)  # box, cls, embeddings
         dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
 
         if self.export and self.format in ('tflite', 'edgetpu'):
@@ -168,7 +169,7 @@ class DetectContrastive(nn.Module):
             dbox /= img_size
 
         y = torch.cat((dbox, cls.sigmoid()), 1)
-        return y if self.export else (y, x)
+        return (y, emb) if self.export else (y, x)
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
@@ -264,11 +265,17 @@ class PoseContrastive(DetectContrastive):
         """Perform forward pass through YOLO model and return predictions."""
         bs = x[0].shape[0]  # batch size
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
-        x = self.detect(self, x)
         if self.training:
+            x = self.detect(self, x)
             return x, kpt
-        pred_kpt = self.kpts_decode(bs, kpt)
-        return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+        elif self.export:
+            y, emb = self.detect(self, x)
+            pred_kpt = self.kpts_decode(bs, kpt)
+            return (torch.cat([y, pred_kpt], 1), emb)
+        else:
+            y, x = self.detect(self, x)
+            pred_kpt = self.kpts_decode(bs, kpt)
+            return (torch.cat([y, pred_kpt], 1), (x, kpt))   # TODO: Also output emb in second case?
 
     def kpts_decode(self, bs, kpts):
         """Decodes keypoints."""
