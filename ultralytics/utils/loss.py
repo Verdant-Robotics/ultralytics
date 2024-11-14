@@ -595,7 +595,7 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         loss[2] *= self.hyp.kobj  # kobj gain
         loss[3] *= self.hyp.cls  # cls gain
         loss[4] *= self.hyp.dfl  # dfl gain
-        
+
         # Custom triplet loss for contrastive learning
         """
         # gt_labels (B, n_gt_labels, 1)
@@ -609,13 +609,6 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         gt_labels = gt_labels.squeeze(-1)  # (B, n_gt_labels)
 
         for b in range(batch_size):
-            # skip if there is no ground truth boxes and labels for the input image
-            # OR if there is no match between anchors and ground truths
-            # if gt_labels[b].size(0) == 0 or fg_mask[b].sum() == 0:
-            #     continue
-            if fg_mask[b].sum() < 2:  # skip if there are not enough positive samples to make a triplet
-                continue
-            
             # find labels of targets using ground truth labels
             target_gt_idx_batch = target_gt_idx[b].long()  # (n_anchors)
             target_labels = gt_labels[b][target_gt_idx_batch]  # (n_achors)
@@ -627,60 +620,10 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             # find unique classes
             uniq_classes = torch.unique(targets)
 
-            # if len(uniq_classes) < 2:  # skip if there are not enough classes to make a triplet (it's ok to have query and positive samples from the same class)
-            #     continue
-            
-            # # pull random indices (ok to be redundant) for query, positive, and negative
-            # n_samples = self.n_samples
-            # query_class_indices = torch.randint(0, len(uniq_classes), (n_samples,))  # query class indices (n_samples,)
-            # neg_class_indices = torch.randint(0, len(uniq_classes) - 1, (n_samples,))  # negative class indices (n_samples,)
-            # neg_class_indices[neg_class_indices >= query_class_indices] += 1  # ensure each negative class index is different from a corresponding query class index (n_samples,)
-            
-            # def select_rand_idx_per_class(targets, class_indices):
-            #     """
-            #     Select random indices per class from the target labels.
-            #     """
-            #     # fetch the actual class labels for the given class indices
-            #     class_labels = uniq_classes[class_indices]  # (n_samples,)
-            #     # create a boolean mask where each row shows which target label == class label
-            #     mask = targets.unsqueeze(0) == class_labels.unsqueeze(1)  # (n_samples, n_matches)
-            #     # convert mask to float for torch.multinomial
-            #     probs = mask.float()
-            #     # take one index per row (target labels) where mask is True
-            #     selected_indices = torch.multinomial(probs, num_samples=1).squeeze(1)  # (n_samples,)
-            #     return selected_indices
-
-            # query_indices = select_rand_idx_per_class(targets, query_class_indices)  # query sample indices (n_samples,)
-            # pos_indices = select_rand_idx_per_class(targets, query_class_indices)  # positive sample indices (n_samples,)
-            # neg_indices = select_rand_idx_per_class(targets, neg_class_indices)  # negative sample indices (n_samples,)
-
-            # # extract embeddings for query, positive, and negative samples
-            # embs_query = embs[query_indices]  # query embeddings  (n_samples, n_features) 
-            # embs_pos = embs[pos_indices]  # positive embeddings  (n_samples, n_features)
-            # embs_neg = embs[neg_indices]  # negative embeddings  (n_samples, n_features)
-
-            # # compute triplet loss (vectorization method)
-            # # equivalent to this brute force method:
-            # # for i in range(n_samples):
-            # #   triplets = (embs_query[i], embs_pos[i], embs_neg[i])  # embeddings for query, positive, and negative samples
-            # #   logit = torch.dot(triplets[0], (triplets[1] - triplets[2]))  # dot(query, pos) - dot(query, neg)
-            # #   y = torch.ones_like(logit)  # (n_samples,)
-            # #   triplet_loss += F.binary_cross_entropy_with_logits(logit, y)
-            # diff = embs_pos - embs_neg  # (n_samples, n_features)
-            # logits = torch.sum(embs_query * diff, dim=1)  # (n_samples,)
-            # logits_avg += logits.mean().item()
-            # y = torch.ones_like(logits)  # y is always 1 if we consider (query, pos) as a positive pair; (n_samples,)
-            # triplet_loss += F.binary_cross_entropy_with_logits(logits, y, reduction='sum') / n_samples  # normalize by number of samples
-            
-            ############################################################# TESTING ######################################################################
-
             # skip if there are not enough classes to make a triplet (it's ok to have query and positive samples from the same class)
             if len(uniq_classes[uniq_classes != 0]) < 2:  # note that class 0 won't be used in the triplet loss
                 continue
 
-            # fully unknown: 0
-            fully_unknown_class = 0  # won't be used in the triplet loss
-            
             # crop species: 1 <= x <= 9
             uniq_crop_classes = torch.tensor(list(filter(lambda x: 1 <= x <= 9, uniq_classes)))  # unique crop classes
 
@@ -797,12 +740,12 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             query_indices = torch.cat([triplet[0] for triplet in triplets])  # query sample indices (n_samples,)
             pos_indices = torch.cat([triplet[1] for triplet in triplets])  # positive sample indices (n_samples,)
             neg_indices = torch.cat([triplet[2] for triplet in triplets])  # negative sample indices (n_samples,)
-            
+
             # extract embeddings for query, positive, and negative samples
             embs_query = embs[query_indices]  # query embeddings (n_samples, n_features)
             embs_pos = embs[pos_indices]  # positive embedding (n_samples, n_features)
             embs_neg = embs[neg_indices]  # negative embeddings (n_samples, n_features)
-            
+
             # compute triplet loss (vectorization method)
             # equivalent to this brute force method:
             # for i in range(n_samples):
@@ -816,8 +759,6 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             y = torch.ones_like(logits)  # y is always 1 if we consider (query, pos) as a positive pair; (n_samples,)
             triplet_loss += F.binary_cross_entropy_with_logits(logits, y, reduction='sum') / n_samples  # normalize by number of samples
 
-            ############################################################################################################################################
-        
         # compute triplet loss
         triplet_loss /= batch_size
         loss[5] = triplet_loss
