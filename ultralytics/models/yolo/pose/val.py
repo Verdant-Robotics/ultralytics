@@ -71,7 +71,7 @@ class PoseValidator(DetectionValidator):
         """Metrics."""
         for si, pred in enumerate(preds):
             idx = batch['batch_idx'] == si
-            cls = batch['cls'][idx]
+            cls = batch['cls'][idx].clamp(max=self.nc - 1)
             bbox = batch['bboxes'][idx]
             kpts = batch['keypoints'][idx]
             nl, npr = cls.shape[0], pred.shape[0]  # number of labels, predictions

@@ -307,11 +307,12 @@ def check_det_dataset(dataset, autodownload=True):
         # for pose-contrastive task, enfoce num classes to be 1
         if training_task == 'pose-contrastive':
             data['nc'] = 1
+            data['names'] = {0: 'plant'}
             print("Setting nc to 1 for pose-contrastive task")
         else:
             data['nc'] = len(data['names'])
+            data['names'] = check_class_names(data['names'])
 
-    data['names'] = check_class_names(data['names'])
 
     # Resolve paths
     path = Path(extract_dir or data.get('path') or Path(data.get('yaml_file', '')).parent)  # dataset root

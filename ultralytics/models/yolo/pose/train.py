@@ -26,7 +26,7 @@ class PoseTrainer(yolo.detect.DetectionTrainer):
         """Initialize a PoseTrainer object with specified configurations and overrides."""
         if overrides is None:
             overrides = {}
-        overrides['task'] = 'pose'
+        overrides['task'] = overrides.get('task', 'pose')
         super().__init__(cfg, overrides, _callbacks)
 
         if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
@@ -90,7 +90,7 @@ class PoseContrastiveTrainer(PoseTrainer):
         """Initialize a PoseContrastiveTrainer object with specified configurations and overrides."""
         if overrides is None:
             overrides = {}
-        overrides['task'] = 'pose_contrastive'
+        overrides['task'] = 'pose-contrastive'
         super().__init__(cfg, overrides, _callbacks)
 
         if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
