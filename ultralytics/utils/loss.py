@@ -609,13 +609,11 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         gt_labels = gt_labels.squeeze(-1)  # (B, n_gt_labels)
 
         for b in range(batch_size):
-            # find labels of targets using ground truth labels
-            target_gt_idx_batch = target_gt_idx[b].long()  # (n_anchors)
-            target_labels = gt_labels[b][target_gt_idx_batch]  # (n_achors)
-
+            if not fg_mask[b].any():
+                continue
             # apply foreground masking
-            targets = target_labels[fg_mask[b]]  # ground truth labels that have a match with an anchor candidate (n_matches,)
-            embs = embeddings[b][fg_mask[b]]  # embeddings that have a match with a ground truth (n_matches, n_features)
+            targets = gt_labels[b][target_gt_idx[b].long()[fg_mask[b]]]  # ground truth label for each matched anchor
+            embs = embeddings[b][fg_mask[b]]  # embedding for each matched anchor (n_matches, n_features)
 
             # find unique classes
             uniq_classes = torch.unique(targets)
@@ -702,7 +700,7 @@ class v8PoseContrastiveLoss(v8PoseLoss):
                 # case1: (crop i, crop i, weed j)
                 class_pairs.extend([(crop_class, weed_class, False) for crop_class, weed_class in crop_weed_product])
                 # case4: (weed j, weed j, crop i)
-                class_pairs.extend([(weed_class, crop_class, False) for weed_class, crop_class in crop_weed_product])
+                class_pairs.extend([(weed_class, crop_class, False) for crop_class, weed_class in crop_weed_product])
             if crops_exist:
                 # case2: (crop i, crop i, crop k)
                 crop1_crop2_product = list(itertools.product(uniq_crop_classes, repeat=2))
@@ -727,19 +725,29 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             n_samples = self.n_samples
             pair_samples = [class_pairs[i] for i in torch.randint(0, len(class_pairs), (n_samples,))]  # redundant pairs are allowed
 
-            # make triplets
+            # (query, positive, negative, weight)
             triplets = []
             for pair in pair_samples:
                 query_class, negative_class, query_equal_pos = pair  # (class A, class B, flag)
                 query = select_rand_idx(1, targets, query_class)  # (1,)
                 pos = query if query_equal_pos else select_rand_idx(1, targets, query_class)  # (1,)
                 neg = select_rand_idx(1, targets, negative_class)  # (1,)
-                triplets.append((query, pos, neg))
+                triplets.append((query, pos, neg, 1.0))
+
+            for query_class in torch.cat(uniq_crop_classes, uniq_weed_classes):
+                a = select_rand_idx(1, targets, query_class)
+                b = select_rand_idx(1, targets, query_class)
+                if a != b:
+                    triplets.append((a, a, b, 0.25))
+                    triplets.append((a, b, a, 0.25))
+                    triplets.append((b, a, b, 0.25))
+                    triplets.append((b, b, a, 0.25))
 
             # extract embeddings for query, positive, and negative samples
             query_indices = torch.cat([triplet[0] for triplet in triplets])  # query sample indices (n_samples,)
             pos_indices = torch.cat([triplet[1] for triplet in triplets])  # positive sample indices (n_samples,)
             neg_indices = torch.cat([triplet[2] for triplet in triplets])  # negative sample indices (n_samples,)
+            triplet_weights = torch.cat([triplet[3] for triplet in triplets])  # (n_samples,)
 
             # extract embeddings for query, positive, and negative samples
             embs_query = embs[query_indices]  # query embeddings (n_samples, n_features)
@@ -757,7 +765,7 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             logits = torch.sum(embs_query * diff, dim=1)  # (n_samples,)
             logits_avg += logits.mean().item()
             y = torch.ones_like(logits)  # y is always 1 if we consider (query, pos) as a positive pair; (n_samples,)
-            triplet_loss += F.binary_cross_entropy_with_logits(logits, y, reduction='sum') / n_samples  # normalize by number of samples
+            triplet_loss += F.binary_cross_entropy_with_logits(logits, y, weights=triplet_weights, reduction='sum') / triplet_weights.sum()  # normalize by number of samples
 
         # compute triplet loss
         triplet_loss /= batch_size
