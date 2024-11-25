@@ -106,7 +106,7 @@ class DetectContrastive(nn.Module):
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch)
         
         # define the number of features in embedding for contrastive learning task
-        self.c3_cls_contrastive = 3 #self.c3
+        self.c3_cls_contrastive = self.c3
 
         # number of outputs per anchor
         # (nc is # classes, reg_max is # predicted bboxes & 4 is bbox attributes (x, y, w, h), c3_cls_contrastive is # features in final classification layer's embeddings for contrastive learning)
@@ -133,9 +133,7 @@ class DetectContrastive(nn.Module):
 
         for i in range(self.nl):  # e.g., per detection scale (small, medium, or large)
             bboxes = self.cv2[i](x[i])  # (B, 4 * reg_max, H, W)
-            
-            # split embeddings by first half for classification and second half for contrastive task
-            predictions = self.predictions[i](x[i])
+            predictions = self.predictions[i](x[i])  # (B, nc + n_features for contrastive learning, H, W)
             x[i] = torch.cat((bboxes, predictions), 1)  # (B, 4 * reg_max + nc + n_features for contrastive learning, H, W) == (B, no, H, W)
             
         if self.training:
