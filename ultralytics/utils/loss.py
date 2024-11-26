@@ -609,13 +609,11 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         gt_labels = gt_labels.squeeze(-1)  # (B, n_gt_labels)
 
         for b in range(batch_size):
-            # find labels of targets using ground truth labels
-            target_gt_idx_batch = target_gt_idx[b].long()  # (n_anchors)
-            target_labels = gt_labels[b][target_gt_idx_batch]  # (n_achors)
-
+            if not fg_mask[b].any():
+                continue
             # apply foreground masking
-            targets = target_labels[fg_mask[b]]  # ground truth labels that have a match with an anchor candidate (n_matches,)
-            embs = embeddings[b][fg_mask[b]]  # embeddings that have a match with a ground truth (n_matches, n_features)
+            targets = gt_labels[b][target_gt_idx[b].long()[fg_mask[b]]]  # ground truth label for each matched anchor
+            embs = embeddings[b][fg_mask[b]]  # embedding for each matched anchor (n_matches, n_features)
 
             # find unique classes
             uniq_classes = torch.unique(targets)
@@ -700,25 +698,25 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             if crops_exist and weed_exist:
                 crop_weed_product = list(itertools.product(uniq_crop_classes, uniq_weed_classes))
                 # case1: (crop i, crop i, weed j)
-                class_pairs.extend([(crop_class, weed_class, False) for crop_class, weed_class in crop_weed_product])
+                class_pairs.extend([(crop_class, weed_class) for crop_class, weed_class in crop_weed_product])
                 # case4: (weed j, weed j, crop i)
-                class_pairs.extend([(weed_class, crop_class, False) for weed_class, crop_class in crop_weed_product])
+                class_pairs.extend([(weed_class, crop_class) for crop_class, weed_class in crop_weed_product])
             if crops_exist:
                 # case2: (crop i, crop i, crop k)
                 crop1_crop2_product = list(itertools.product(uniq_crop_classes, repeat=2))
-                class_pairs.extend([(crop1_class, crop2_class, False) for crop1_class, crop2_class in crop1_crop2_product if crop1_class != crop2_class])
+                class_pairs.extend([(crop1_class, crop2_class) for crop1_class, crop2_class in crop1_crop2_product])
             if crops_exist and unknown_weed_exist:
                 # case3: (crop i, crop i, unknown weed) & case7: (unknown weed, itself, crop i)
                 for crop_class in uniq_crop_classes:
-                    class_pairs.extend([(crop_class, unknown_weed_class, False), (unknown_weed_class, crop_class, True)])
+                    class_pairs.extend([(crop_class, unknown_weed_class), (unknown_weed_class, crop_class)])
             if weed_exist:
                 # case5: (weed j, weed j, weed k)
                 weed1_weed2_product = list(itertools.product(uniq_weed_classes, repeat=2))
-                class_pairs.extend([(weed1_class, weed2_class, False) for weed1_class, weed2_class in weed1_weed2_product if weed1_class != weed2_class])
+                class_pairs.extend([(weed1_class, weed2_class) for weed1_class, weed2_class in weed1_weed2_product])
             if weed_exist and unknown_crop_exist:
                 # case6: (weed j, weed j, unknown crop) & case8: (unknown crop, itself, weed j)
                 for weed_class in uniq_weed_classes:
-                    class_pairs.extend([(weed_class, unknown_crop_class, False), (unknown_crop_class, weed_class, True)])
+                    class_pairs.extend([(weed_class, unknown_crop_class), (unknown_crop_class, weed_class)])
 
             if not class_pairs:
                 continue
@@ -727,14 +725,18 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             n_samples = self.n_samples
             pair_samples = [class_pairs[i] for i in torch.randint(0, len(class_pairs), (n_samples,))]  # redundant pairs are allowed
 
-            # make triplets
+            # (query, positive, negative)
             triplets = []
             for pair in pair_samples:
-                query_class, negative_class, query_equal_pos = pair  # (class A, class B, flag)
-                query = select_rand_idx(1, targets, query_class)  # (1,)
-                pos = query if query_equal_pos else select_rand_idx(1, targets, query_class)  # (1,)
-                neg = select_rand_idx(1, targets, negative_class)  # (1,)
-                triplets.append((query, pos, neg))
+                class_a, class_b = pair  # (class A, class B)
+                a = select_rand_idx(1, targets, class_a)  # (1,)
+                b = select_rand_idx(1, targets, class_b)  # (1,)
+                if class_a == class_b:
+                    triplets.append((a, b, a))  # b should be in front of a
+                    triplets.append((b, a, b))  # a should be in front of b
+                else:
+                    triplets.append((a, a, b))  # b should be behind a
+                    triplets.append((b, b, a))  # a should be behind b
 
             # extract embeddings for query, positive, and negative samples
             query_indices = torch.cat([triplet[0] for triplet in triplets])  # query sample indices (n_samples,)

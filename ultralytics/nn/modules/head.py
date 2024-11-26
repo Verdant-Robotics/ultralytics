@@ -112,15 +112,12 @@ class DetectContrastive(nn.Module):
         # (nc is # classes, reg_max is # predicted bboxes & 4 is bbox attributes (x, y, w, h), c3_cls_contrastive is # features in final classification layer's embeddings for contrastive learning)
         self.no = nc + self.reg_max * 4 + self.c3_cls_contrastive
 
+        # pre-define a convolution classification layer for weight-sharing
+        self.shared_conv = nn.Conv2d(self.c3, self.nc + self.c3_cls_contrastive, 1)
+
         # a list of sequences of layers that output embeddings of predicted bboxes for small, medium, or large detection scale
         # (in the last convolution block, c3 is num features for classification, c3_cls_contrastive is num features for contrastive learning)
-        self.embedding_layers = nn.ModuleList(nn.Sequential(Conv(x, self.c3, 3), Conv(self.c3, self.c3 + self.c3_cls_contrastive, 3)) for x in ch)
-
-        # pre-define a convolution classification layer for weight-sharing
-        self.shared_conv = nn.Conv2d(self.c3, self.nc, 1)
-
-        # a list of layers that output logit (raw score) for classification (for small, medium, large)
-        self.cls_preds = nn.ModuleList(self.shared_conv for _ in ch)
+        self.predictions = nn.ModuleList(nn.Sequential(Conv(x, self.c3, 3), Conv(self.c3, self.c3, 3), self.shared_conv) for x in ch)
 
         # distribution focal loss
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
@@ -136,13 +133,8 @@ class DetectContrastive(nn.Module):
 
         for i in range(self.nl):  # e.g., per detection scale (small, medium, or large)
             bboxes = self.cv2[i](x[i])  # (B, 4 * reg_max, H, W)
-            
-            # split embeddings by first half for classification and second half for contrastive task
-            full_embedding = self.embedding_layers[i](x[i])
-            embeddings_cls = full_embedding[:, :self.c3, :, :]  # (B, n_features for cls, H, W)
-            embeddings_contrastive = full_embedding[:, self.c3:(self.c3 + self.c3_cls_contrastive), :, :]  # (B, n_features for contrastive learning, H, W)
-            cls_predictions = self.cls_preds[i](embeddings_cls)  # (B, nc, H, W)
-            x[i] = torch.cat((bboxes, cls_predictions, embeddings_contrastive), 1)  # (B, 4 * reg_max + nc + n_features for contrastive learning, H, W) == (B, no, H, W)
+            predictions = self.predictions[i](x[i])  # (B, nc + n_features for contrastive learning, H, W)
+            x[i] = torch.cat((bboxes, predictions), 1)  # (B, 4 * reg_max + nc + n_features for contrastive learning, H, W) == (B, no, H, W)
             
         if self.training:
             return x
