@@ -411,7 +411,7 @@ class v8PoseLoss(v8DetectionLoss):
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
 
-        ################# TODO shift gt_labels to 0 (crop) and 1 (weed) for binary classification #################
+        ################# shift gt_labels to 0 (crop) and 1 (weed) for binary classification #################
         # pred_scores: (B, N, C) where B is batch size, N is num anchors, C is num classes
         # gt_labels: (B, S, 1) where S is # of max targets (gt bboxes) in any image in the batch
         # 1. extract field classes from gt_labels       
@@ -419,9 +419,9 @@ class v8PoseLoss(v8DetectionLoss):
             zero_loss = (pred_scores * 0).sum()  # multiply 0 to pred_scores to allow gradient computation during GradScaler's backprop
             return zero_loss.sum() * batch_size, zero_loss.detach()  # 0 loss to not affect the model training during backprop (x_new = x_old - lr * dL/dx)
         
-        # if there are no targets in the image, we assume that the field class is 0 (belongs to the very first field dataset)
-        # this is not 100% accuractue but won't affect the model training much as there are no targets to learn from
-        field_classes = gt_labels[:, 0].int().squeeze() // 2  # classes (crop & weed) per field image (e.g., [0,1,2,3] -> [0,0,1,1])
+        # assign a crop field class to each image in the batch
+        # (we reason on the very first target's class to determine the field for the image)
+        field_classes = gt_labels[:, 0].int().squeeze() // 2  # classes (crop & weed) per crop field image (e.g., [0,1,2,3] -> [0,0,1,1]); (B,)
 
         # 2. convert gt_labels = gt_labels % 2 (e.g., [0,1,2,3] -> [0,1,0,1])
         gt_labels = gt_labels % 2  # gt_labels[:, :] % 2
@@ -431,11 +431,13 @@ class v8PoseLoss(v8DetectionLoss):
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
         pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
 
-        ################# TODO slice pred_scores #################
+        ############################################# slice pred_scores #############################################
         # For each batch (B) & all anchors (N), drop all irrelevant classes (C) from classification predictions
+        print(f"pred_scores.shape: {pred_scores.shape}, field_classes.shape: {field_classes.shape}, gt_labels.shape: {gt_labels.shape}")
         for b, c in enumerate(field_classes):
-            pred_scores[b, :, 0:2] = pred_scores[b, :, c:c+2]  # bring classes (crop & weed for the field) to the front
-        pred_scores = pred_scores[:, :, 0:2]  # slice to keep only crop and weed classes for the field of interest
+            c_offset = c * 2  # 0 -> 0, 1 -> 2, 2 -> 4, ... where label 2 will actually mean class 4 (crop) or 5 (weed) in the crop field C
+            pred_scores[b, :, 0:2] = pred_scores[b, :, c_offset:c_offset+2]  # bring classes (crop & weed for the field) to the front
+        pred_scores = pred_scores[:, :, 0:2]  # slice to keep only the crop and weed classes for the field of interest
         ##############################################################################################################
 
         # target_bboxes: (B, N, 4), target_scores: (B, N, num_classes), fg_mask: (B, N), target_gt_idx: (B, N)
@@ -443,8 +445,9 @@ class v8PoseLoss(v8DetectionLoss):
             pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
 
-        # slice target scores as prediction scores are sliced
+        ############################# slice target scores as prediction scores are sliced #############################
         target_scores = target_scores[:, :, 0:2]
+        ###############################################################################################################
 
         target_scores_sum = max(target_scores.sum(), 1)
 
@@ -799,11 +802,11 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         return loss[:6].sum() * batch_size, loss.detach()  # loss(box, pose, kobj, cls, dfl, triplet)
 
 
-class v8PoseIndivLoss(v8PoseLoss):  # TODO make changes in this class and make it callable & runnable
+class v8PoseConditionalLoss(v8PoseLoss):  # TODO make changes in this class and make it callable & runnable
     """Criterion class for computing training losses."""
 
     def __init__(self, model):
-        """Initializes the v8PoseIndivLoss class."""
+        """Initializes the v8PoseConditionalLoss class."""
         super().__init__(model)
 
     def __call__(self, preds, batch):
