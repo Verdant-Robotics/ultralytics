@@ -35,14 +35,25 @@ class Detect(nn.Module):
         c2, c3 = max(16, ch[0] // 4, self.reg_max * 4), max(ch[0], min(self.nc, 100))  # channels
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch)
-        self.cv3 = nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
+        # self.cv3 = nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
+
+        import math
+        self.num_heads = math.ceil(self.nc / 2)
+        self.num_cls_per_head = math.ceil(self.nc / self.num_heads)
+        self.cv3 = nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3)) for x in ch)
+        self.heads = nn.ModuleList([nn.ModuleList([nn.Conv2d(c3, self.num_cls_per_head, 1) for _ in range(self.num_heads)]) for _ in range(self.nl)])
+        
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
         shape = x[0].shape  # BCHW
-        for i in range(self.nl):
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+        for i in range(self.nl):  # per detection scale
+            # x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+            neck = self.cv3[i](x[i])
+            cv2_output = self.cv2[i](x[i])
+            head_outputs = [head(neck) for head in self.heads[i]]
+            x[i] = torch.cat((cv2_output, *head_outputs), 1)
         if self.training:
             return x
         elif self.dynamic or self.shape != shape:
@@ -74,9 +85,13 @@ class Detect(nn.Module):
         m = self  # self.model[-1]  # Detect() module
         # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1
         # ncf = math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # nominal class frequency
-        for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
+        # for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
+        #     a[-1].bias.data[:] = 1.0  # box
+        #     b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
+        for a, heads, s in zip(m.cv2, m.heads, m.stride):  # from
             a[-1].bias.data[:] = 1.0  # box
-            b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
+            for b in heads:
+                b.bias.data[:m.num_cls_per_head] = math.log(5 / m.num_cls_per_head / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
 
 
 class DetectContrastive(nn.Module):

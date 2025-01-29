@@ -433,7 +433,6 @@ class v8PoseLoss(v8DetectionLoss):
 
         ############################################# slice pred_scores #############################################
         # For each batch (B) & all anchors (N), drop all irrelevant classes (C) from classification predictions
-        print(f"pred_scores.shape: {pred_scores.shape}, field_classes.shape: {field_classes.shape}, gt_labels.shape: {gt_labels.shape}")
         for b, c in enumerate(field_classes):
             c_offset = c * 2  # 0 -> 0, 1 -> 2, 2 -> 4, ... where label 2 will actually mean class 4 (crop) or 5 (weed) in the crop field C
             pred_scores[b, :, 0:2] = pred_scores[b, :, c_offset:c_offset+2]  # bring classes (crop & weed for the field) to the front
