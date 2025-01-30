@@ -65,8 +65,8 @@ from ultralytics.cfg import get_cfg
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.nn.autobackend import check_class_names
-from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder, DetectContrastive
-from ultralytics.nn.tasks import DetectionModel, SegmentationModel, PoseContrastiveModel
+from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder, DetectContrastive, DetectMultiClsHeads
+from ultralytics.nn.tasks import DetectionModel, SegmentationModel, PoseContrastiveModel, PoseMultiClsHeadsModel
 from ultralytics.utils import (ARM64, DEFAULT_CFG, LINUX, LOGGER, MACOS, ROOT, WINDOWS, __version__, callbacks,
                                colorstr, get_default_args, yaml_save)
 from ultralytics.utils.checks import check_imgsz, check_requirements, check_version
@@ -199,7 +199,7 @@ class Exporter:
         model.float()
         model = model.fuse()
         for m in model.modules():
-            if isinstance(m, (Detect, DetectContrastive, RTDETRDecoder)):  # Segment and Pose use Detect base class
+            if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, RTDETRDecoder)):  # Segment and Pose use Detect base class
                 m.dynamic = self.args.dynamic
                 m.export = True
                 m.format = self.args.format
@@ -238,7 +238,7 @@ class Exporter:
             'batch': self.args.batch,
             'imgsz': self.imgsz,
             'names': model.names}  # model metadata
-        if model.task in {'pose', 'pose-contrastive'}:
+        if model.task in {'pose', 'pose-contrastive', 'pose-multiclsheads'}:
             self.metadata['kpt_shape'] = model.model[-1].kpt_shape
 
         LOGGER.info(f"\n{colorstr('PyTorch:')} starting from '{file}' with input shape {tuple(im.shape)} BCHW and "
