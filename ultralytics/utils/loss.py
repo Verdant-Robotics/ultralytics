@@ -779,6 +779,7 @@ class v8PoseMultiClsHeadsLoss(v8PoseLoss):
         """Initializes v8PoseMultiClsHeadsLoss with model, sets keypoint variables and declares a keypoint loss instance."""
         super().__init__(model)
         self.n_losses = 5  # box, cls, dfl, kpt_location, kpt_visibility
+        self.nc_per_head = model.model[-1].nc_per_head  # number of classes per classification head
 
     def __call__(self, preds, batch):
         """Calculate the total loss and detach it."""
@@ -804,45 +805,38 @@ class v8PoseMultiClsHeadsLoss(v8PoseLoss):
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
 
-        # shift gt_labels to 0 (crop) and 1 (weed) for binary classification
-        # pred_scores: (B, N, C) where B is batch size, N is num anchors, C is num classes
-        # gt_labels: (B, S, 1) where S is # of max targets (gt bboxes) in any image in the batch
-        # extract field classes from gt_labels       
-        if gt_labels.shape[1] == 0:  # if there are no targets across all field images in the batch
-            # multiply 0 to pred scores to not affect training while allowing gradient computation during GradScaler's backprop
+        # if no targets across the batch, multiply 0 to not affect training while allowing gradient flow in GradScaler backprop
+        if gt_labels.shape[1] == 0:
             zero_loss = abs(torch.zeros(self.n_losses, device=self.device)  * pred_scores.sum())
             return zero_loss.sum() * batch_size, zero_loss.detach()
         
-        # assign a crop field class to each image in the batch
-        # (we reason on the very first target's class to determine the field for the image)
-        field_classes = gt_labels[:, 0].int().squeeze() // 2  # classes (crop & weed) per crop field image (e.g., [0,1,2,3] -> [0,0,1,1]); (B,)
+        # assign a classification head index to each image in the batch by reasoning on the very first target's class
+        head_classes = gt_labels[:, 0].int().squeeze() // self.nc_per_head
 
-        # 2. convert gt_labels = gt_labels % 2 (e.g., [0,1,2,3] -> [0,1,0,1])
-        gt_labels = gt_labels % 2  # gt_labels[:, :] % 2
+        # convert gt_label indices to specific classes for each head
+        gt_labels = gt_labels % self.nc_per_head
 
         # Pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
         pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
 
-        # slice pred_scores
-        # For each batch (B) & all anchors (N), drop all irrelevant classes (C) from classification predictions
-        for b, c in enumerate(field_classes):
-            c_offset = c * 2  # 0 -> 0, 1 -> 2, 2 -> 4, ... where label 2 will actually mean class 4 (crop) or 5 (weed) in the crop field C
-            pred_scores[b, :, 0:2] = pred_scores[b, :, c_offset:c_offset+2]  # bring classes (crop & weed for the field) to the front
-        pred_scores = pred_scores[:, :, 0:2]  # slice to keep only the crop and weed classes for the field of interest
+        # for each batch (B) & all anchors (N), drop all irrelevant classes (C) from classification predictions
+        for b, c in enumerate(head_classes):  # each batch represents an image (and a corresponding cls head)
+            c_offset = c * self.nc_per_head
+            pred_scores[b, :, 0:self.nc_per_head] = pred_scores[b, :, c_offset:c_offset+self.nc_per_head]  # bring classes the front
+        pred_scores = pred_scores[:, :, 0:self.nc_per_head]  # slice to keep only the classes of the head
 
-        # target_bboxes: (B, N, 4), target_scores: (B, N, num_classes), fg_mask: (B, N), target_gt_idx: (B, N)
+        # target_bboxes: (B, N, 4), target_scores: (B, N, C), fg_mask: (B, N), target_gt_idx: (B, N)
         _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
             pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
 
         # slice target scores as prediction scores are sliced
-        target_scores = target_scores[:, :, 0:2]
+        target_scores = target_scores[:, :, 0:self.nc_per_head]
 
         target_scores_sum = max(target_scores.sum(), 1)
 
         # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
         loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
         # Bbox loss

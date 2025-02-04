@@ -196,10 +196,12 @@ class DetectMultiClsHeads(nn.Module):
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch)
 
-        self.num_heads = math.ceil(self.nc / 2)
-        self.num_cls_per_head = math.ceil(self.nc / self.num_heads)
+        self.nc_per_head = 2  # number of classes per head
+        self.head_sizes = [self.nc_per_head] * (self.nc // self.nc_per_head)  # list of number of classes per head
+        if self.nc % self.nc_per_head:  # for handling case when total number of classes is 1 during dummy forward pass
+            self.head_sizes.append(self.nc % self.nc_per_head)
         self.cv3 = nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3)) for x in ch)
-        self.heads = nn.ModuleList([nn.ModuleList([nn.Conv2d(c3, self.num_cls_per_head, 1) for _ in range(self.num_heads)]) for _ in range(self.nl)])
+        self.heads = nn.ModuleList([nn.ModuleList([nn.Conv2d(c3, h_size, 1) for h_size in self.head_sizes]) for _ in range(self.nl)])
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
@@ -238,11 +240,11 @@ class DetectMultiClsHeads(nn.Module):
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""
-        for a, heads, s in zip(self.cv2, self.heads, self.stride):
+        for a, heads, s in zip(self.cv2, self.heads, self.stride):  # per detection scale
             a[-1].bias.data[:] = 1.0  # bias initalization for bbox attributes regression path
-            for b in heads:
+            for b, h_size in zip(heads, self.head_sizes):
                 # bias initialization for classification path per head
-                b.bias.data[:self.num_cls_per_head] = math.log(5 / self.num_cls_per_head / (640 / s) ** 2)
+                b.bias.data[:] = math.log(5 / h_size / (640 / s) ** 2)
 
 
 class Segment(Detect):
