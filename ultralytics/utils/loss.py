@@ -772,6 +772,94 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         return loss[:6].sum() * batch_size, loss.detach()  # loss(box, pose, kobj, cls, dfl, triplet)
 
 
+class v8PoseMultiClsHeadsLoss(v8PoseLoss):
+    """Criterion class for computing training losses for a pose model with multiple classification heads."""
+
+    def __init__(self, model):  # model must be de-paralleled
+        """Initializes v8PoseMultiClsHeadsLoss with model, sets keypoint variables and declares a keypoint loss instance."""
+        super().__init__(model)
+        self.n_losses = 5  # box, cls, dfl, kpt_location, kpt_visibility
+        self.nc_per_head = model.model[-1].nc_per_head  # number of classes per classification head
+
+    def __call__(self, preds, batch):
+        """Calculate the total loss and detach it."""
+        loss = torch.zeros(self.n_losses, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
+        feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
+        pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
+            (self.reg_max * 4, self.nc), 1)
+
+        # B, grids, ..
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+        pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
+
+        dtype = pred_scores.dtype
+        imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
+        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
+
+        # Targets
+        batch_size = pred_scores.shape[0]
+        batch_idx = batch['batch_idx'].view(-1, 1)
+        targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1)
+        targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
+
+        # if no targets across the batch, multiply 0 to not affect training while allowing gradient flow in GradScaler backprop
+        if gt_labels.shape[1] == 0:
+            zero_loss = abs(torch.zeros(self.n_losses, device=self.device)  * pred_scores.sum())
+            return zero_loss.sum() * batch_size, zero_loss.detach()
+        
+        # assign a classification head index to each image in the batch by reasoning on the very first target's class
+        head_classes = gt_labels[:, 0].int().squeeze() // self.nc_per_head
+
+        # convert gt_label indices to specific classes for each head
+        gt_labels = gt_labels % self.nc_per_head
+
+        # Pboxes
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
+
+        # for each batch (B) & all anchors (N), drop all irrelevant classes (C) from classification predictions
+        for b, c in enumerate(head_classes):  # each batch represents an image (and a corresponding cls head)
+            c_offset = c * self.nc_per_head
+            pred_scores[b, :, 0:self.nc_per_head] = pred_scores[b, :, c_offset:c_offset+self.nc_per_head]  # bring classes the front
+        pred_scores = pred_scores[:, :, 0:self.nc_per_head]  # slice to keep only the classes of the head
+
+        # target_bboxes: (B, N, 4), target_scores: (B, N, C), fg_mask: (B, N), target_gt_idx: (B, N)
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+
+        # slice target scores as prediction scores are sliced
+        target_scores = target_scores[:, :, 0:self.nc_per_head]
+
+        target_scores_sum = max(target_scores.sum(), 1)
+
+        # Cls loss
+        loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
+
+        # Bbox loss
+        if fg_mask.sum():
+            target_bboxes /= stride_tensor
+            loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                              target_scores_sum, fg_mask)
+            keypoints = batch['keypoints'].to(self.device).float().clone()
+            keypoints[..., 0] *= imgsz[1]
+            keypoints[..., 1] *= imgsz[0]
+
+            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
+                                                             stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
+
+        loss[0] *= self.hyp.box  # box gain
+        loss[1] *= self.hyp.pose  # pose gain
+        loss[2] *= self.hyp.kobj  # kobj gain
+        loss[3] *= self.hyp.cls  # cls gain
+        loss[4] *= self.hyp.dfl  # dfl gain
+
+        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+
+
 class v8ClassificationLoss:
     """Criterion class for computing training losses."""
 
