@@ -28,6 +28,7 @@ def PrepareDataset(coco_classes_file, dataset_yaml, training_task):
             f.write(f"  {i}: {classes[i]}\n")
         if training_task == "pose" or training_task == "pose-contrastive" or training_task == "pose-multiclsheads":
             f.write("\nkpt_shape: [1, 3]\n")  # enforce keypoint shape to [1, 3] for pose models
+            f.write("flip_idx: [0]\n")  # enforce left-right flipping of keypoints
     return
 
 
