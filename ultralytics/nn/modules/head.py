@@ -2,7 +2,7 @@
 """Model head modules."""
 
 import math
-
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.init import constant_, xavier_uniform_
@@ -26,8 +26,8 @@ class Detect(nn.Module):
     strides = torch.empty(0)  # init
 
     def __init__(self, nc=80, ch=()):
-        """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
-        super().__init__()
+        super().__init__()  # Calls nn.Module.__init__()
+
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
         self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
@@ -274,11 +274,8 @@ class Segment(Detect):
 
 
 class Pose(Detect):
-    """YOLOv8 Pose head for keypoints models."""
-
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
-        """Initialize YOLO network with default parameters and Convolutional Layers."""
-        super().__init__(nc, ch)
+        super().__init__(nc, ch)  # Calls Detect.__init__()
         self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
         self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
         self.detect = Detect.forward
@@ -291,6 +288,7 @@ class Pose(Detect):
         bs = x[0].shape[0]  # batch size
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
         x = self.detect(self, x)
+
         if self.training:
             return x, kpt
         pred_kpt = self.kpts_decode(bs, kpt)
@@ -400,6 +398,60 @@ class PoseMultiClsHeads(DetectMultiClsHeads):
             y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
             y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
             return y  
+
+
+class PoseField(Pose):
+    def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
+        super().__init__(nc, kpt_shape, ch)
+
+        self.nc_field = 3 # number of field classes
+        self.pose = Pose.forward
+
+        # Define field classification head
+        c5 = max(ch[0] // 2, self.nc_field)  
+        self.cv5 = nn.ModuleList(
+            nn.Sequential(Conv(x, c5, 3), Conv(c5, c5, 3), nn.Conv2d(c5, self.nc_field, 1)) for x in ch
+        )
+
+    def forward(self, x):
+        """Perform forward pass through YOLO model and return predictions."""
+        # Process field classification predictions
+        bs = x[0].shape[0]  # batch size
+        
+        # Process field branch
+        fld_maps = [self.cv5[i](x[i]) for i in range(self.nl)] # cv5 outputs
+        fld_per_scale = [fm.mean(dim=(2, 3)) for fm in fld_maps]  # Compute global average pooling 
+        fld = torch.stack(fld_per_scale, dim=0).mean(dim=0)  # Resulting shape: [batch, nc_field]
+        fld = fld.softmax(1)
+
+        pose_out = self.pose(self, x) # Pose outputs. set after fld classification since x is modified
+
+        if self.training:
+            x_out, kpt = pose_out
+            return x_out, kpt, fld
+        else:
+            if self.export:
+                fld = fld.unsqueeze(2)
+                fld = fld.expand(-1, -1, pose_out.shape[2])
+                return torch.cat([pose_out, fld], 1)
+            else:
+                p1, p2 = pose_out
+                fld = fld.unsqueeze(2)
+                fld = fld.expand(-1, -1, p1.shape[2])
+                return torch.cat([p1, fld], 1), (p2[0], p2[1], fld)
+
+    def bias_init(self):
+        """Initialize Detect() biases, WARNING: requires stride availability."""
+        m = self  # self.model[-1]  # Detect() module
+        # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1
+        # ncf = math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # nominal class frequency
+        for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
+            a[-1].bias.data[:] = 1.0  # box
+            b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
+
+
+        for f in self.cv5:  # Field classification head
+            f[-1].bias.data[:] = math.log(5 / self.nc_field / (640 / self.stride[0]) ** 2)
 
 class Classify(nn.Module):
     """YOLOv8 classification head, i.e. x(b,c1,20,20) to x(b,c2)."""

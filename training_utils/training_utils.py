@@ -26,7 +26,7 @@ def PrepareDataset(coco_classes_file, dataset_yaml, training_task):
         f.write("names:\n")
         for i in range(len(classes)):
             f.write(f"  {i}: {classes[i]}\n")
-        if training_task == "pose" or training_task == "pose-contrastive" or training_task == "pose-multiclsheads":
+        if training_task == "pose" or training_task == "pose-contrastive" or training_task == "pose-multiclsheads" or training_task == 'pose-field':
             f.write("\nkpt_shape: [1, 3]\n")  # enforce keypoint shape to [1, 3] for pose models
             f.write("flip_idx: [0]\n")  # enforce left-right flipping of keypoints
     return
@@ -41,6 +41,9 @@ def GetModelYaml(task):
         return "yolov8n-pose-contrastive.yaml"
     elif task == "pose-multiclsheads":
         return "yolov8n-pose-multiclsheads.yaml"
+    elif task == "pose-field":
+        return "yolov8n-pose-field.yaml"
+
     print(f"Unknown task {task}")
     return None
 

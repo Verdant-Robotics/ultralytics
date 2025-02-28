@@ -116,13 +116,13 @@ class BaseTrainer:
             if self.args.task == 'classify':
                 self.data = check_cls_dataset(self.args.data)
             elif self.args.data.split('.')[-1] in ('yaml', 'yml') or self.args.task in ('detect', 'segment', 
-                                                                                        'pose', 'pose-contrastive', 'pose-multiclsheads'):
+                                                                                        'pose', 'pose-contrastive', 'pose-multiclsheads', 'pose-field'):
                 self.data = check_det_dataset(self.args.data)
                 if 'yaml_file' in self.data:
                     self.args.data = self.data['yaml_file']  # for validating 'yolo train data=url.zip' usage
+
         except Exception as e:
             raise RuntimeError(emojis(f"Dataset '{clean_url(self.args.data)}' error ❌ {e}")) from e
-
         self.trainset, self.testset = self.get_dataset(self.data)
         self.ema = None
 
@@ -394,8 +394,9 @@ class BaseTrainer:
 
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
-                    batch = self.preprocess_batch(batch)
+                    btlossatch = self.preprocess_batch(batch)
                     self.loss, self.loss_items = self.model(batch)
+                    # print(self.loss, self.loss_items)
                     if RANK != -1:
                         self.loss *= world_size
                     self.tloss = (self.tloss * i + self.loss_items) / (i + 1) if self.tloss is not None \
@@ -416,7 +417,7 @@ class BaseTrainer:
                 if RANK in (-1, 0):
                     pbar.set_description(
                         ('%11s' * 2 + '%11.4g' * (2 + loss_len)) %
-                        (f'{epoch + 1}/{self.epochs}', mem, *losses, batch['cls'].shape[0], batch['img'].shape[-1]))
+                        ('hi {epoch + 1}/{self.epochs}', mem, *losses, batch['cls'].shape[0], batch['img'].shape[-1]))
                     self.run_callbacks('on_batch_end')
                     if self.args.plots and ni in self.plot_idx:
                         self.plot_training_samples(batch, ni)

@@ -12,7 +12,7 @@ from .metrics import bbox_iou
 from .tal import bbox2dist
 
 import itertools
-
+import numpy as np
 
 class VarifocalLoss(nn.Module):
     """
@@ -776,7 +776,7 @@ class v8PoseMultiClsHeadsLoss(v8PoseLoss):
     """Criterion class for computing training losses for a pose model with multiple classification heads."""
 
     def __init__(self, model):  # model must be de-paralleled
-        """Initializes v8PoseMultiClsHeadsLoss with model, sets keypoint variables and declares a keypoint loss instance."""
+        """Initializes v8PoseLoss with model, sets keypoint variables and declares a keypoint loss instance."""
         super().__init__(model)
         self.n_losses = 5  # box, cls, dfl, kpt_location, kpt_visibility
         self.nc_per_head = model.model[-1].nc_per_head  # number of classes per classification head
@@ -858,6 +858,43 @@ class v8PoseMultiClsHeadsLoss(v8PoseLoss):
         loss[4] *= self.hyp.dfl  # dfl gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+
+
+class v8PoseFieldLoss(v8PoseLoss):
+    """Criterion class for computing training losses for a pose model and a field head."""
+
+    def __init__(self, model):  # model must be de-paralleled
+        """Initializes v8PoseFieldLoss with model, sets keypoint variables and declares a keypoint loss instance."""
+        super().__init__(model)
+        self.n_losses = 6  # box, cls, dfl, kpt_location, kpt_visibility, fld_cls
+        self.nc_field = 3  # number of field classes, TODO: extract from field head [-2]
+        self.ce_field = nn.CrossEntropyLoss()  # CrossEntropy for multi-class classification
+
+    def __call__(self, preds, batch):
+        loss = torch.zeros(self.n_losses, device=self.device)
+            
+        feats, pred_kpts, pred_fld = preds if isinstance(preds[0], list) else preds[1]
+
+        batch_size = pred_fld.shape[0]
+        batch_idx = batch['batch_idx'].view(-1).long()  # shape: [num_detections]
+        class_ids = batch['cls'][:, 0].long()
+
+        group_ids = class_ids // 2 # Map class_ids to groups (for classes 0-5, groups 0,1,2)
+        target_fld = torch.zeros(batch_size, self.nc_field, device=self.device) # Create target field tensor with shape (local_batch_size, nc_field)
+        target_fld[batch_idx, group_ids] = 1 # For each detection, set the corresponding group bit for its image to 1.
+
+        # Compute field loss
+        loss[:-1], preds = super().__call__((feats, pred_kpts), batch)
+        if len(pred_fld.shape) == 3:
+            pred_fld = pred_fld.mean(dim=2)  # This will give you shape [32, 3]
+        loss[-1] = self.ce_field(pred_fld, target_fld.argmax(dim=1))
+        loss[-1] *= self.hyp.cls  # cls gain
+
+        print('box, cls, dfl, kpt_location, kpt_visibility, fld_cls')
+        print(loss)
+        print()
+
+        return loss.sum() * batch_size, loss.detach()
 
 
 class v8ClassificationLoss:

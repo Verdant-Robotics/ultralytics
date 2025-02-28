@@ -10,13 +10,12 @@ import torch.nn as nn
 from ultralytics.nn.modules import (AIFI, C1, C2, C3, C3TR, SPP, SPPF, Bottleneck, BottleneckCSP, C2f, C3Ghost, C3x,
                                     Classify, Concat, Conv, Conv2, ConvTranspose, Detect, DetectContrastive, DetectMultiClsHeads,
                                     DWConv, DWConvTranspose2d,
-                                    Focus, GhostBottleneck, GhostConv, HGBlock, HGStem, Pose, PoseContrastive, PoseMultiClsHeads,
+                                    PoseField, Focus, GhostBottleneck, GhostConv, HGBlock, HGStem, Pose, PoseContrastive, PoseMultiClsHeads,
                                     RepC3, RepConv,
                                     RTDETRDecoder, Segment)
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
-from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, v8PoseMultiClsHeadsLoss, 
-                                    v8SegmentationLoss)
+from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, v8PoseMultiClsHeadsLoss, v8PoseFieldLoss, v8SegmentationLoss)
 from ultralytics.utils.plotting import feature_visualization
 from ultralytics.utils.torch_utils import (fuse_conv_and_bn, fuse_deconv_and_bn, initialize_weights, intersect_dicts,
                                            make_divisible, model_info, scale_img, time_sync)
@@ -238,10 +237,10 @@ class DetectionModel(BaseModel):
 
         # Build strides
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads)):
+        if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads, PoseField)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
-            forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads)) else self.forward(x)
+            forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads, PoseField)) else self.forward(x)
             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -345,6 +344,15 @@ class PoseMultiClsHeadsModel(PoseModel):
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseMultiClsHeadsLoss(self)
 
+class PoseFieldModel(PoseModel):
+    """YOLOv8 pose model, including field type head."""
+    def __init__(self, cfg='yolov8n-pose-field.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+        """Initialize YOLOv8 PoseFieldModel."""
+        super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the v8PoseFieldModel."""
+        return v8PoseFieldLoss(self)
 
 class ClassificationModel(BaseModel):
     """YOLOv8 classification model."""
@@ -730,7 +738,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
-        elif m in (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads):
+        elif m in (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads, PoseField):
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
@@ -802,10 +810,11 @@ def guess_model_task(model):
     Raises:
         SyntaxError: If the task of the model could not be determined.
     """
-
     def cfg2task(cfg):
         """Guess from YAML dictionary."""
         m = cfg['head'][-1][-2].lower()  # output module name
+        if m == 'posefield':
+            return 'pose-field'
         if m in ('classify', 'classifier', 'cls', 'fc'):
             return 'classify'
         if m == 'detect':
@@ -846,6 +855,8 @@ def guess_model_task(model):
                 return 'pose-contrastive'
             elif isinstance(m, PoseMultiClsHeads):
                 return 'pose-multiclsheads'
+            elif isinstance(m, PoseField):
+                return 'pose-field'
 
     # Guess from model filename
     if isinstance(model, (str, Path)):
@@ -862,6 +873,8 @@ def guess_model_task(model):
             return 'pose-contrastive'
         elif 'multiclsheads' in model.stem:
             return 'pose-multiclsheads'
+        elif 'field' in model.stem:
+            return 'pose-field'
 
     # Unable to determine task from model
     LOGGER.warning("WARNING ⚠️ Unable to automatically guess model task, assuming 'task=detect'. "

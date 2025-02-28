@@ -14,6 +14,8 @@ import os
 import argparse
 from export import Export
 
+from ultralytics.utils import (DATASETS_DIR, LOGGER, NUM_THREADS, ROOT, SETTINGS_YAML, TQDM, clean_url, colorstr,
+                               emojis, yaml_load)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the model")
@@ -31,14 +33,13 @@ if __name__ == "__main__":
             exit(1)
     else:
         model = YOLO(GetModelYaml(training_task))  # Initialize model
-
     model.train(
         task=training_task,
         data="verdant.yaml",
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=300,
+        epochs=10,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,

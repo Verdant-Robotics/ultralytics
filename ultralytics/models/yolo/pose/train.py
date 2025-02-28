@@ -3,7 +3,7 @@
 from copy import copy
 
 from ultralytics.models import yolo
-from ultralytics.nn.tasks import PoseModel, PoseContrastiveModel, PoseMultiClsHeadsModel
+from ultralytics.nn.tasks import PoseModel, PoseContrastiveModel, PoseMultiClsHeadsModel, PoseFieldModel
 from ultralytics.utils import DEFAULT_CFG, LOGGER
 from ultralytics.utils.plotting import plot_images, plot_results
 
@@ -23,6 +23,8 @@ class PoseTrainer(yolo.detect.DetectionTrainer):
     """
 
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
+
+
         """Initialize a PoseTrainer object with specified configurations and overrides."""
         if overrides is None:
             overrides = {}
@@ -49,6 +51,9 @@ class PoseTrainer(yolo.detect.DetectionTrainer):
     def get_validator(self):
         """Returns an instance of the PoseValidator class for validation."""
         self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'trpl_loss', 'avg_logits'
+        print('&&&&&')
+        print(self.loss_names)
+        print('&&&&&')
         return yolo.pose.PoseValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))
 
     def plot_training_samples(self, batch, ni):
@@ -133,6 +138,44 @@ class PoseMultiClsHeadsTrainer(PoseTrainer):
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Get pose estimation model with specified configuration and weights."""
         model = PoseMultiClsHeadsModel(cfg, ch=3, nc=self.data['nc'], data_kpt_shape=self.data['kpt_shape'], verbose=verbose)
+        if weights:
+            model.load(weights)
+
+        return model
+
+class PoseFieldTrainer(PoseTrainer):
+    """
+    A class extending the DetectionTrainer class for training based on a pose model.
+
+    Example:
+        ```python
+        from ultralytics.models.yolo.pose import PoseMultiClsHeadsTrainer
+
+        args = dict(model='yolov8n-pose-field.pt', data='coco8-pose.yaml', epochs=3)
+        trainer = PoseMultiClsHeadsTrainer(overrides=args)
+        trainer.train()
+        ```
+    """
+    def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
+        """Initialize a PoseMultiClsHeadsTrainer object with specified configurations and overrides."""
+        if overrides is None:
+            overrides = {}
+        overrides['task'] = 'pose-field'
+        super().__init__(cfg, overrides, _callbacks)
+
+        if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
+            LOGGER.warning("WARNING ⚠️ Apple MPS known Pose bug. Recommend 'device=cpu' for Pose models. "
+                           'See https://github.com/ultralytics/ultralytics/issues/4031.')
+
+    def get_validator(self):
+        """Returns an instance of the PoseValidator class for validation."""
+        self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'trpl_loss', 'avg_logits', 'fld_loss'
+        return yolo.pose.PoseValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))
+
+    def get_model(self, cfg=None, weights=None, verbose=True):
+        """Get pose estimation model with specified configuration and weights."""
+        model = PoseFieldModel(cfg, ch=3, nc=self.data['nc'], data_kpt_shape=self.data['kpt_shape'], verbose=verbose)
+        print('DONE RUNNING SELF.DATA')
         if weights:
             model.load(weights)
 
