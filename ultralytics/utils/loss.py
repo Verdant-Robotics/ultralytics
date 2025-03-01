@@ -387,7 +387,7 @@ class v8PoseLoss(v8DetectionLoss):
         sigmas = torch.from_numpy(OKS_SIGMA).to(self.device) if is_pose else torch.ones(nkpt, device=self.device) / nkpt
         self.keypoint_loss = KeypointLoss(sigmas=sigmas)
 
-    def __call__(self, preds, batch):
+    def __call__(self, preds, batch, return_losses=False):
         """Calculate the total loss and detach it."""
         loss = torch.zeros(5, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
@@ -442,6 +442,9 @@ class v8PoseLoss(v8DetectionLoss):
         loss[2] *= self.hyp.kobj  # kobj gain
         loss[3] *= self.hyp.cls  # cls gain
         loss[4] *= self.hyp.dfl  # dfl gain
+
+        if return_losses:
+            return loss
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
@@ -871,28 +874,39 @@ class v8PoseFieldLoss(v8PoseLoss):
         self.ce_field = nn.CrossEntropyLoss()  # CrossEntropy for multi-class classification
 
     def __call__(self, preds, batch):
+        # print(batch)
         loss = torch.zeros(self.n_losses, device=self.device)
             
         feats, pred_kpts, pred_fld = preds if isinstance(preds[0], list) else preds[1]
+        # print(pred_kpts.shape)
+        # print(feats[0].shape)
+        loss[:-1] = super().__call__((feats, pred_kpts), batch, return_losses=True)
 
         batch_size = pred_fld.shape[0]
         batch_idx = batch['batch_idx'].view(-1).long()  # shape: [num_detections]
         class_ids = batch['cls'][:, 0].long()
 
         group_ids = class_ids // 2 # Map class_ids to groups (for classes 0-5, groups 0,1,2)
-        target_fld = torch.zeros(batch_size, self.nc_field, device=self.device) # Create target field tensor with shape (local_batch_size, nc_field)
-        target_fld[batch_idx, group_ids] = 1 # For each detection, set the corresponding group bit for its image to 1.
-
+        # target_fld = torch.zeros(batch_size, self.nc_field, device=self.device) # Create target field tensor with shape (local_batch_size, nc_field)
+        # group_ids = torch.where(class_ids % 2 == 0, class_ids // 2, self.nc_field)  # group_ids for crop (//2) weed (nc_field)
+        target_fld = torch.zeros(batch_size, self.nc_field+1, device=self.device)  # Create target field tensor with shape (batch_size, nc_field+1)
+        target_fld[batch_idx, group_ids] = 1 # Set the corresponding group bit for its image to 1.
+        target_fld[target_fld.sum(dim=1) == 0, -1] = 1 # Set final bit ("Other" class) to 1 for empty tiles (no batch idx used)
+        # print('class',class_ids)
+        # print('group',group_ids)
+        # print('fld pred', pred_fld)
+        # print('fld',target_fld)
         # Compute field loss
-        loss[:-1], preds = super().__call__((feats, pred_kpts), batch)
         if len(pred_fld.shape) == 3:
             pred_fld = pred_fld.mean(dim=2)  # This will give you shape [32, 3]
         loss[-1] = self.ce_field(pred_fld, target_fld.argmax(dim=1))
         loss[-1] *= self.hyp.cls  # cls gain
+        # print(loss)
+        # loss[-1] = 0
 
-        print('box, cls, dfl, kpt_location, kpt_visibility, fld_cls')
-        print(loss)
-        print()
+        # print('box, cls, dfl, kpt_location, kpt_visibility, fld_cls')
+        # print(loss)
+        # print()
 
         return loss.sum() * batch_size, loss.detach()
 

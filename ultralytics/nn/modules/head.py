@@ -410,7 +410,7 @@ class PoseField(Pose):
         # Define field classification head
         c5 = max(ch[0] // 2, self.nc_field)  
         self.cv5 = nn.ModuleList(
-            nn.Sequential(Conv(x, c5, 3), Conv(c5, c5, 3), nn.Conv2d(c5, self.nc_field, 1)) for x in ch
+            nn.Sequential(Conv(x, c5, 3), Conv(c5, c5, 3), nn.Conv2d(c5, self.nc_field+1, 1)) for x in ch
         )
 
     def forward(self, x):
@@ -419,11 +419,11 @@ class PoseField(Pose):
         bs = x[0].shape[0]  # batch size
         
         # Process field branch
-        fld_maps = [self.cv5[i](x[i]) for i in range(self.nl)] # cv5 outputs
-        fld_per_scale = [fm.mean(dim=(2, 3)) for fm in fld_maps]  # Compute global average pooling 
-        fld = torch.stack(fld_per_scale, dim=0).mean(dim=0)  # Resulting shape: [batch, nc_field]
-        fld = fld.softmax(1)
-
+        cv5_outs = [self.cv5[i](x[i]) for i in range(self.nl)] # cv5 outputs for each scale
+        avg_pooled_outputs = [cv5_out.mean(dim=(2, 3)) for cv5_out in cv5_outs]  # Compute global average pooling 
+        fld_logits = torch.stack(avg_pooled_outputs, dim=0).mean(dim=0)  # stack output from each scale, then average -> [batch_size, num_field]
+        fld = fld_logits.softmax(1) # fld probabilities
+        
         pose_out = self.pose(self, x) # Pose outputs. set after fld classification since x is modified
 
         if self.training:
