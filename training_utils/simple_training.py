@@ -20,6 +20,7 @@ from ultralytics.utils import (DATASETS_DIR, LOGGER, NUM_THREADS, ROOT, SETTINGS
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the model")
     parser.add_argument("-l", "--load", type=str, default=None, help="Path to the model weights to load. Load the pretrained model")
+    parser.add_argument("-d", "--disable-wandb", action="store_true", help="Disable wandb logging")
 
     args = parser.parse_args()
 
@@ -33,6 +34,10 @@ if __name__ == "__main__":
             exit(1)
     else:
         model = YOLO(GetModelYaml(training_task))  # Initialize model
+
+    if args.disable_wandb:
+        os.environ['WANDB_MODE'] = 'disabled'
+
     model.train(
         task=training_task,
         data="verdant.yaml",
