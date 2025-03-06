@@ -408,7 +408,7 @@ class PoseField(Pose):
         self.pose = Pose.forward
 
         # Define field classification head
-        c5 = max(ch[0] // 2, self.nc_field)  
+        c5 = max(ch[0] // 2, self.nc_field)  # TODO(romain): very low
         self.cv5 = nn.ModuleList(
             nn.Sequential(Conv(x, c5, 3), Conv(c5, c5, 3), nn.Conv2d(c5, self.nc_field+1, 1)) for x in ch
         )
@@ -428,17 +428,22 @@ class PoseField(Pose):
 
         if self.training:
             x_out, kpt = pose_out
-            return x_out, kpt, fld
+            # print(fld.shape)
+            return x_out, kpt, fld_logits
         else:
             if self.export:
                 fld = fld.unsqueeze(2)
                 fld = fld.expand(-1, -1, pose_out.shape[2])
-                return torch.cat([pose_out, fld], 1)
+                out = torch.cat([pose_out, fld], 1)
+                # print(out.shape)
+                return out
             else:
                 p1, p2 = pose_out
                 fld = fld.unsqueeze(2)
                 fld = fld.expand(-1, -1, p1.shape[2])
-                return torch.cat([p1, fld], 1), (p2[0], p2[1], fld)
+                out = torch.cat([p1, fld], 1), (p2[0], p2[1], fld)
+                # print(out[0].shape)
+                return out
 
     def bias_init(self):
         """Initialize Detect() biases, WARNING: requires stride availability."""

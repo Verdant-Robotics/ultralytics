@@ -898,9 +898,16 @@ class v8PoseFieldLoss(v8PoseLoss):
         # print('fld',target_fld)
         # Compute field loss
         if len(pred_fld.shape) == 3:
-            pred_fld = pred_fld.mean(dim=2)  # This will give you shape [32, 3]
-        loss[-1] = self.ce_field(pred_fld, target_fld.argmax(dim=1))
-        loss[-1] *= self.hyp.cls  # cls gain
+            pred_fld = pred_fld.mean(dim=2)  # This will give you shape [B, 4, C]
+
+        # Convert target_fld to class indices (not one-hot)
+        target_class = target_fld.argmax(dim=1)
+
+        # Calculate the loss between predicted probabilities and ground truth class indices
+        loss[-1] = self.ce_field(pred_fld, target_class)
+        # loss[-1] = self.ce_field(pred_fld, target_fld.argmax(dim=1))
+        # print(pred_fld, target_fld, self.hyp.cls)
+        # loss[-1] *= self.hyp.cls  # cls gain
         # print(loss)
         # loss[-1] = 0
 
