@@ -188,6 +188,8 @@ class Exporter:
 
         # Input
         im = torch.zeros(self.args.batch, 3, *self.imgsz).to(self.device)
+        image_features = torch.zeros(self.args.batch, model.nc // 2).to(self.device)
+
         file = Path(
             getattr(model, 'pt_path', None) or getattr(model, 'yaml_file', None) or model.yaml.get('yaml_file', ''))
         if file.suffix in {'.yaml', '.yml'}:
@@ -211,9 +213,11 @@ class Exporter:
 
         y = None
         for _ in range(2):
-            y = model(im)  # dry runs
+            # y = model(im)  # dry runs
+            y = model(im, image_features)  # dry runs
         if self.args.half and (engine or onnx) and self.device.type != 'cpu':
-            im, model = im.half(), model.half()  # to FP16
+            # im, model = im.half(), model.half()  # to FP16
+            im, image_features, model = im.half(), image_features.half(), model.half()  # to FP16
 
         # Filter warnings
         warnings.filterwarnings('ignore', category=torch.jit.TracerWarning)  # suppress TracerWarning
@@ -222,6 +226,7 @@ class Exporter:
 
         # Assign
         self.im = im
+        self.image_features = image_features
         self.model = model
         self.file = file
         self.output_shape = tuple(y.shape) if isinstance(y, torch.Tensor) else tuple(
@@ -331,7 +336,9 @@ class Exporter:
             output_names = ['output0']
         dynamic = self.args.dynamic
         if dynamic:
-            dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'}}  # shape(1,3,640,640)
+            # dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'}}  # shape(1,3,640,640)
+            dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'},  # shape(1,3,640,640)
+                        'image_features': {0: 'batch', 1: 'feature_dim'}}  # shape(1, nc//2)
             if isinstance(self.model, SegmentationModel):
                 dynamic['output0'] = {0: 'batch', 2: 'anchors'}  # shape(1, 116, 8400)
                 dynamic['output1'] = {0: 'batch', 2: 'mask_height', 3: 'mask_width'}  # shape(1,32,160,160)
@@ -340,15 +347,19 @@ class Exporter:
                 dynamic['embeddings'] = {0: 'batch', 2: 'anchors'}
             elif isinstance(self.model, DetectionModel):
                 dynamic['output0'] = {0: 'batch', 2: 'anchors'}  # shape(1, 84, 8400)
+        # TODO: make if condition for new task (inputting extra features as extra input to cls head)
 
         torch.onnx.export(
             self.model.cpu() if dynamic else self.model,  # dynamic=True only compatible with cpu
-            self.im.cpu() if dynamic else self.im,
+            # self.im.cpu() if dynamic else self.im,
+            (self.im.cpu() if dynamic else self.im, 
+             self.image_features.cpu() if dynamic else self.image_features),
             f,
             verbose=False,
             opset_version=opset_version,
             do_constant_folding=True,  # WARNING: DNN inference with torch>=1.12 may require do_constant_folding=False
-            input_names=['images'],
+            # input_names=['images'],
+            input_names=['images', 'image_features'],
             output_names=output_names,
             dynamic_axes=dynamic or None)
 

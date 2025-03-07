@@ -219,7 +219,83 @@ class BaseModel(nn.Module):
         raise NotImplementedError('compute_loss() needs to be implemented by task heads')
 
 
-class DetectionModel(BaseModel):
+# class DetectionModel(BaseModel):
+#     """YOLOv8 detection model."""
+
+#     def __init__(self, cfg='yolov8n.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes
+#         """Initialize the YOLOv8 detection model with the given config and parameters."""
+#         super().__init__()
+#         self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+
+#         # Define model
+#         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
+#         if nc and nc != self.yaml['nc']:
+#             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+#             self.yaml['nc'] = nc  # override YAML value
+#         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+#         self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict
+#         self.inplace = self.yaml.get('inplace', True)
+
+#         # Build strides
+#         m = self.model[-1]  # Detect()
+#         if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads)):
+#             s = 256  # 2x min stride
+#             m.inplace = self.inplace
+#             forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads)) else self.forward(x)
+#             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
+#             self.stride = m.stride
+#             m.bias_init()  # only run once
+#         else:
+#             self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
+
+#         # Init weights, biases
+#         initialize_weights(self)
+#         if verbose:
+#             self.info()
+#             LOGGER.info('')
+
+#     def _predict_augment(self, x):
+#         """Perform augmentations on input image x and return augmented inference and train outputs."""
+#         img_size = x.shape[-2:]  # height, width
+#         s = [1, 0.83, 0.67]  # scales
+#         f = [None, 3, None]  # flips (2-ud, 3-lr)
+#         y = []  # outputs
+#         for si, fi in zip(s, f):
+#             xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
+#             yi = super().predict(xi)[0]  # forward
+#             yi = self._descale_pred(yi, fi, si, img_size)
+#             y.append(yi)
+#         y = self._clip_augmented(y)  # clip augmented tails
+#         return torch.cat(y, -1), None  # augmented inference, train
+
+#     @staticmethod
+#     def _descale_pred(p, flips, scale, img_size, dim=1):
+#         """De-scale predictions following augmented inference (inverse operation)."""
+#         p[:, :4] /= scale  # de-scale
+#         x, y, wh, cls = p.split((1, 1, 2, p.shape[dim] - 4), dim)
+#         if flips == 2:
+#             y = img_size[0] - y  # de-flip ud
+#         elif flips == 3:
+#             x = img_size[1] - x  # de-flip lr
+#         return torch.cat((x, y, wh, cls), dim)
+
+#     def _clip_augmented(self, y):
+#         """Clip YOLO augmented inference tails."""
+#         nl = self.model[-1].nl  # number of detection layers (P3-P5)
+#         g = sum(4 ** x for x in range(nl))  # grid points
+#         e = 1  # exclude layer count
+#         i = (y[0].shape[-1] // g) * sum(4 ** x for x in range(e))  # indices
+#         y[0] = y[0][..., :-i]  # large
+#         i = (y[-1].shape[-1] // g) * sum(4 ** (nl - 1 - x) for x in range(e))  # indices
+#         y[-1] = y[-1][..., i:]  # small
+#         return y
+
+#     def init_criterion(self):
+#         """Initialize the loss criterion for the DetectionModel."""
+#         return v8DetectionLoss(self)
+    
+
+class DetectionModel(BaseModel):  # experimental
     """YOLOv8 detection model."""
 
     def __init__(self, cfg='yolov8n.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes
@@ -241,7 +317,7 @@ class DetectionModel(BaseModel):
         if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
-            forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads)) else self.forward(x)
+            forward = lambda x: self.forward(x, x_features=None)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads)) else self.forward(x)
             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -307,7 +383,24 @@ class SegmentationModel(DetectionModel):
         return v8SegmentationLoss(self)
 
 
-class PoseModel(DetectionModel):
+# class PoseModel(DetectionModel):
+#     """YOLOv8 pose model."""
+
+#     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+#         """Initialize YOLOv8 Pose model."""
+#         if not isinstance(cfg, dict):
+#             cfg = yaml_model_load(cfg)  # load model YAML
+#         if any(data_kpt_shape) and list(data_kpt_shape) != list(cfg['kpt_shape']):
+#             LOGGER.info(f"Overriding model.yaml kpt_shape={cfg['kpt_shape']} with kpt_shape={data_kpt_shape}")
+#             cfg['kpt_shape'] = data_kpt_shape
+#         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+#     def init_criterion(self):
+#         """Initialize the loss criterion for the PoseModel."""
+#         return v8PoseLoss(self)
+
+
+class PoseModel(DetectionModel):  # experimental
     """YOLOv8 pose model."""
 
     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
@@ -322,6 +415,96 @@ class PoseModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseLoss(self)
+
+    def predict(self, x, x_features=None, profile=False, visualize=False, augment=False):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+            augment (bool): Augment image during prediction, defaults to False.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        if x_features is None:
+            B = x.shape[0]
+            nc = self.yaml['nc']
+            x_features = torch.zeros(B, nc//2) if nc != 1 else torch.zeros(B, nc)  # dummy image features
+        
+        if augment:
+            return self._predict_augment(x, x_features)
+        return self._predict_once(x, x_features, profile, visualize)
+
+    def _predict_once(self, x, x_features, profile=False, visualize=False):
+        """
+        Perform a forward pass through the network.
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool):  Print the computation time of each layer if True, defaults to False.
+            visualize (bool): Save the feature maps of the model if True, defaults to False.
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        if isinstance(profile, torch.Tensor):
+            profile = False
+        
+        y, dt = [], []  # outputs
+        for i, m in enumerate(self.model):  # a list of layers in sequence (torch.nn.modules.container.Sequential)
+            if m.f != -1:  # if not from previous layer
+                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
+            if profile:
+                self._profile_one_layer(m, x, dt)
+
+            if i == len(self.model) - 1:
+                x = m(x, x_features)  # run head
+            else:
+                x = m(x)  # run
+
+            y.append(x if m.i in self.save else None)  # save output
+            if visualize:
+                feature_visualization(x, m.type, m.i, save_dir=visualize)
+        return x  # tuple(x[0],x[1]) where x[0] contains (B,C,H,W) for small, med, large & x[1] contains (B,?,n_total_anchors)
+
+    def _predict_augment(self, x, x_features):
+        """Perform augmentations on input image x and return augmented inference."""
+        LOGGER.warning(f'WARNING ⚠️ {self.__class__.__name__} does not support augmented inference yet. '
+                    f'Reverting to single-scale inference instead.')
+        return self._predict_once(x, x_features)
+    
+    def loss(self, batch, x_features, preds=None):
+        """
+        Compute loss.
+
+        Args:
+            batch (dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if not hasattr(self, 'criterion'):
+            self.criterion = self.init_criterion()
+
+        preds = self.forward(batch['img'], x_features) if preds is None else preds  # predict; forward through whole model
+        return self.criterion(preds, batch)
+    
+    def forward(self, x, x_features, *args, **kwargs):
+        """
+        Forward pass of the model on a single scale. Wrapper for `_forward_once` method.
+
+        Args:
+            x (torch.Tensor | dict): The input image tensor or a dict including image tensor and gt labels.
+
+        Returns:
+            (torch.Tensor): The output of the network.
+        """
+        #TODO: pass in (x, x_features) tuple instead of x and x_features separately.
+        #TODO: create separate classes for this task (inputting extra features as extra input to cls head)
+        if isinstance(x, dict):  # for cases of training and validating while training.
+            return self.loss(x, x_features, *args, **kwargs)  # x is a batch of img, cls, bbox, batch_idx, etc.
+        return self.predict(x, x_features, *args, **kwargs)  # x is an image tensor
     
 
 class PoseContrastiveModel(PoseModel):

@@ -395,7 +395,47 @@ class BaseTrainer:
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-                    self.loss, self.loss_items = self.model(batch)
+
+                    # convert gt labels to one hot field vector 
+                    # and DO THIS FOR THE DEDICATED TASK CLASS by creating a new class in pose/trainer.py and overwriting _do_train()
+                    x_img, x_cls, x_bbox, x_batchidx = batch['img'], batch['cls'], batch['bboxes'], batch['batch_idx']
+                    imgsz, device = x_img.shape[2:], x_img.device
+                    n_img_features = self.model.module.nc // 2
+
+                    # process gt cls labels
+                    from ultralytics.utils.ops import xywh2xyxy
+                    def preprocess(targets, batch_size, scale_tensor, device):
+                        """Preprocesses the target counts and matches with the input batch size to output a tensor."""
+                        if targets.shape[0] == 0:
+                            out = torch.zeros(batch_size, 0, 5, device=device)
+                        else:
+                            i = targets[:, 0]  # image index
+                            _, counts = i.unique(return_counts=True)
+                            counts = counts.to(dtype=torch.int32)
+                            out = torch.zeros(batch_size, counts.max(), 5, device=device)
+                            for j in range(batch_size):
+                                matches = i == j
+                                n = matches.sum()
+                                if n:
+                                    out[j, :n] = targets[matches, 1:]
+                            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))  #TODO: remove 1:5 for bbox, just keep 0 for cls
+                        return out
+                    batch_size = x_img.shape[0]
+                    targets = torch.cat((x_batchidx.view(-1,1), x_cls.view(-1, 1), x_bbox), 1)
+                    scale_tensor = torch.tensor([imgsz[1], imgsz[0], imgsz[1], imgsz[0]], device=device)
+                    targets = preprocess(targets.to(device), batch_size, scale_tensor=scale_tensor, device=device)
+                    gt_labels, _ = targets.split((1, 4), 2)  # cls gt labels (B, n_gt_labels, 1)
+                    
+                    # create one-hot vectors for image features (e.g., image source) using gt labels
+                    gt_labels = gt_labels.squeeze(-1).long()  # (B, n_gt_labels)
+                    self.img_features = torch.zeros(gt_labels.shape[0], n_img_features)  # initialize and stack B number of source vectors (B, nc//2)
+                    if gt_labels.shape[1] > 0:  # if at least one image in the batch has gt labels
+                        img_features_indices = gt_labels[:, 0] // 2  # infer source from any gt label for all inputs in batch (B)
+                        # Note: if gt_label[0]=0 and it means no labels, not class idx 0, then this will be handled during loss computation
+                        self.img_features[torch.arange(gt_labels.shape[0]), img_features_indices] = 1  # assign 1 to source index for each source vector
+
+                    # self.loss, self.loss_items = self.model(batch)
+                    self.loss, self.loss_items = self.model(batch, self.img_features)
                     if RANK != -1:
                         self.loss *= world_size
                     self.tloss = (self.tloss * i + self.loss_items) / (i + 1) if self.tloss is not None \
