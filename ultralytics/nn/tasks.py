@@ -8,23 +8,43 @@ import torch
 import torch.nn as nn
 
 from ultralytics.nn.modules import (AIFI, C1, C2, C3, C3TR, SPP, SPPF, Bottleneck, BottleneckCSP, C2f, C3Ghost, C3x,
-                                    Classify, Concat, Conv, Conv2, ConvTranspose, Detect, DetectContrastive, DetectMultiClsHeads,
-                                    DWConv, DWConvTranspose2d,
-                                    Focus, GhostBottleneck, GhostConv, HGBlock, HGStem, Pose, PoseContrastive, PoseMultiClsHeads,
-                                    RepC3, RepConv,
-                                    RTDETRDecoder, Segment)
+                                    Classify, Concat, Conv, Conv2, ConvTranspose, Detect, DetectContrastive, 
+                                    DetectMultiClsHeads, DetectTunableHead, DWConv, DWConvTranspose2d,
+                                    Focus, GhostBottleneck, GhostConv, HGBlock, HGStem, Pose, PoseContrastive, 
+                                    PoseMultiClsHeads, PoseTunableHead, RepC3, RepConv, RTDETRDecoder, Segment
+                                    )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
-from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, v8PoseMultiClsHeadsLoss, 
-                                    v8SegmentationLoss)
+from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, 
+                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss
+                                    )
 from ultralytics.utils.plotting import feature_visualization
 from ultralytics.utils.torch_utils import (fuse_conv_and_bn, fuse_deconv_and_bn, initialize_weights, intersect_dicts,
                                            make_divisible, model_info, scale_img, time_sync)
+from ultralytics.utils.ops import xywh2xyxy
 
 try:
     import thop
 except ImportError:
     thop = None
+
+
+def prepare_batch_targets(targets, batch_size, scale_tensor, device):
+    """Preprocesses the target counts and matches with the input batch size to output a tensor."""
+    if targets.shape[0] == 0:
+        out = torch.zeros(batch_size, 0, 5, device=device)
+    else:
+        i = targets[:, 0]  # image index
+        _, counts = i.unique(return_counts=True)
+        counts = counts.to(dtype=torch.int32)
+        out = torch.zeros(batch_size, counts.max(), 5, device=device)
+        for j in range(batch_size):
+            matches = i == j
+            n = matches.sum()
+            if n:
+                out[j, :n] = targets[matches, 1:]
+        out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))  #TODO: remove 1:5 for bbox, just keep 0 for cls
+    return out
 
 
 class BaseModel(nn.Module):
@@ -179,7 +199,7 @@ class BaseModel(nn.Module):
         """
         self = super()._apply(fn)
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment)):
+        if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment)):
             m.stride = fn(m.stride)
             m.anchors = fn(m.anchors)
             m.strides = fn(m.strides)
@@ -219,83 +239,7 @@ class BaseModel(nn.Module):
         raise NotImplementedError('compute_loss() needs to be implemented by task heads')
 
 
-# class DetectionModel(BaseModel):
-#     """YOLOv8 detection model."""
-
-#     def __init__(self, cfg='yolov8n.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes
-#         """Initialize the YOLOv8 detection model with the given config and parameters."""
-#         super().__init__()
-#         self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
-
-#         # Define model
-#         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
-#         if nc and nc != self.yaml['nc']:
-#             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
-#             self.yaml['nc'] = nc  # override YAML value
-#         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
-#         self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict
-#         self.inplace = self.yaml.get('inplace', True)
-
-#         # Build strides
-#         m = self.model[-1]  # Detect()
-#         if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads)):
-#             s = 256  # 2x min stride
-#             m.inplace = self.inplace
-#             forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads)) else self.forward(x)
-#             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
-#             self.stride = m.stride
-#             m.bias_init()  # only run once
-#         else:
-#             self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
-
-#         # Init weights, biases
-#         initialize_weights(self)
-#         if verbose:
-#             self.info()
-#             LOGGER.info('')
-
-#     def _predict_augment(self, x):
-#         """Perform augmentations on input image x and return augmented inference and train outputs."""
-#         img_size = x.shape[-2:]  # height, width
-#         s = [1, 0.83, 0.67]  # scales
-#         f = [None, 3, None]  # flips (2-ud, 3-lr)
-#         y = []  # outputs
-#         for si, fi in zip(s, f):
-#             xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
-#             yi = super().predict(xi)[0]  # forward
-#             yi = self._descale_pred(yi, fi, si, img_size)
-#             y.append(yi)
-#         y = self._clip_augmented(y)  # clip augmented tails
-#         return torch.cat(y, -1), None  # augmented inference, train
-
-#     @staticmethod
-#     def _descale_pred(p, flips, scale, img_size, dim=1):
-#         """De-scale predictions following augmented inference (inverse operation)."""
-#         p[:, :4] /= scale  # de-scale
-#         x, y, wh, cls = p.split((1, 1, 2, p.shape[dim] - 4), dim)
-#         if flips == 2:
-#             y = img_size[0] - y  # de-flip ud
-#         elif flips == 3:
-#             x = img_size[1] - x  # de-flip lr
-#         return torch.cat((x, y, wh, cls), dim)
-
-#     def _clip_augmented(self, y):
-#         """Clip YOLO augmented inference tails."""
-#         nl = self.model[-1].nl  # number of detection layers (P3-P5)
-#         g = sum(4 ** x for x in range(nl))  # grid points
-#         e = 1  # exclude layer count
-#         i = (y[0].shape[-1] // g) * sum(4 ** x for x in range(e))  # indices
-#         y[0] = y[0][..., :-i]  # large
-#         i = (y[-1].shape[-1] // g) * sum(4 ** (nl - 1 - x) for x in range(e))  # indices
-#         y[-1] = y[-1][..., i:]  # small
-#         return y
-
-#     def init_criterion(self):
-#         """Initialize the loss criterion for the DetectionModel."""
-#         return v8DetectionLoss(self)
-    
-
-class DetectionModel(BaseModel):  # experimental
+class DetectionModel(BaseModel):
     """YOLOv8 detection model."""
 
     def __init__(self, cfg='yolov8n.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes
@@ -314,10 +258,12 @@ class DetectionModel(BaseModel):  # experimental
 
         # Build strides
         m = self.model[-1]  # Detect()
-        if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads)):
+        if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment, 
+                          Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
-            forward = lambda x: self.forward(x, x_features=None)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads)) else self.forward(x)
+            forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads, 
+                                                                     PoseTunableHead)) else self.forward(x)
             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -383,24 +329,7 @@ class SegmentationModel(DetectionModel):
         return v8SegmentationLoss(self)
 
 
-# class PoseModel(DetectionModel):
-#     """YOLOv8 pose model."""
-
-#     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
-#         """Initialize YOLOv8 Pose model."""
-#         if not isinstance(cfg, dict):
-#             cfg = yaml_model_load(cfg)  # load model YAML
-#         if any(data_kpt_shape) and list(data_kpt_shape) != list(cfg['kpt_shape']):
-#             LOGGER.info(f"Overriding model.yaml kpt_shape={cfg['kpt_shape']} with kpt_shape={data_kpt_shape}")
-#             cfg['kpt_shape'] = data_kpt_shape
-#         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
-
-#     def init_criterion(self):
-#         """Initialize the loss criterion for the PoseModel."""
-#         return v8PoseLoss(self)
-
-
-class PoseModel(DetectionModel):  # experimental
+class PoseModel(DetectionModel):
     """YOLOv8 pose model."""
 
     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
@@ -416,12 +345,25 @@ class PoseModel(DetectionModel):  # experimental
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseLoss(self)
 
-    def predict(self, x, x_features=None, profile=False, visualize=False, augment=False):
+
+class PoseTunableHeadModel(PoseModel):
+    """YOLOv8 pose-tunablehead model."""
+
+    def __init__(self, cfg='yolov8n-pose-tunablehead.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+        """Initialize YOLOv8 Pose model."""
+        super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the PoseModel."""
+        return v8PoseTunableHeadLoss(self)
+
+    def predict(self, x, x_features, profile=False, visualize=False, augment=False):
         """
         Perform a forward pass through the network.
 
         Args:
             x (torch.Tensor): The input tensor to the model.
+            x_features (torch.Tensor): one hot vector containing features of the input image
             profile (bool):  Print the computation time of each layer if True, defaults to False.
             visualize (bool): Save the feature maps of the model if True, defaults to False.
             augment (bool): Augment image during prediction, defaults to False.
@@ -429,10 +371,6 @@ class PoseModel(DetectionModel):  # experimental
         Returns:
             (torch.Tensor): The last output of the model.
         """
-        if x_features is None:
-            B = x.shape[0]
-            nc = self.yaml['nc']
-            x_features = torch.zeros(B, nc//2) if nc != 1 else torch.zeros(B, nc)  # dummy image features
         
         if augment:
             return self._predict_augment(x, x_features)
@@ -444,6 +382,7 @@ class PoseModel(DetectionModel):  # experimental
 
         Args:
             x (torch.Tensor): The input tensor to the model.
+            x_features (torch.Tensor): one hot vector containing features of the input image
             profile (bool):  Print the computation time of each layer if True, defaults to False.
             visualize (bool): Save the feature maps of the model if True, defaults to False.
 
@@ -468,7 +407,7 @@ class PoseModel(DetectionModel):  # experimental
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
-        return x  # tuple(x[0],x[1]) where x[0] contains (B,C,H,W) for small, med, large & x[1] contains (B,?,n_total_anchors)
+        return x
 
     def _predict_augment(self, x, x_features):
         """Perform augmentations on input image x and return augmented inference."""
@@ -476,7 +415,7 @@ class PoseModel(DetectionModel):  # experimental
                     f'Reverting to single-scale inference instead.')
         return self._predict_once(x, x_features)
     
-    def loss(self, batch, x_features, preds=None):
+    def loss(self, batch, preds=None):
         """
         Compute loss.
 
@@ -487,24 +426,60 @@ class PoseModel(DetectionModel):  # experimental
         if not hasattr(self, 'criterion'):
             self.criterion = self.init_criterion()
 
-        preds = self.forward(batch['img'], x_features) if preds is None else preds  # predict; forward through whole model
+        x_features = self.convert_cls_to_features(batch)  # convert class labels to one hot feature vectors
+        
+        preds = self.forward((batch['img'], x_features)) if preds is None else preds
         return self.criterion(preds, batch)
     
-    def forward(self, x, x_features, *args, **kwargs):
+    def forward(self, x, x_features=None, *args, **kwargs):
         """
         Forward pass of the model on a single scale. Wrapper for `_forward_once` method.
 
         Args:
             x (torch.Tensor | dict): The input image tensor or a dict including image tensor and gt labels.
+            x_features (torch.Tensor): placeholder for passing in one hot feature vector as extra input during inference
 
         Returns:
             (torch.Tensor): The output of the network.
         """
-        #TODO: pass in (x, x_features) tuple instead of x and x_features separately.
-        #TODO: create separate classes for this task (inputting extra features as extra input to cls head)
-        if isinstance(x, dict):  # for cases of training and validating while training.
-            return self.loss(x, x_features, *args, **kwargs)  # x is a batch of img, cls, bbox, batch_idx, etc.
-        return self.predict(x, x_features, *args, **kwargs)  # x is an image tensor
+        if isinstance(x, dict):  # case: training / validator
+            if self.training:
+                return self.loss(x, *args, **kwargs)
+            else:
+                x_features = self.convert_cls_to_features(x)  # convert class labels to one hot feature vectors
+                return self.predict([x['img'], x_features], *args, **kwargs)
+
+        elif isinstance(x, tuple):  # case: inference inside training / validation
+            x, x_features = x  # img, img features
+            return self.predict(x, x_features, *args, **kwargs)
+        
+        else:  # case: dummy forward pass with a dummy image tensor
+            if x_features is None:
+                B = x.shape[0]
+                nc = self.yaml['nc']
+                x_features = torch.zeros(B, nc//2) if nc != 1 else torch.zeros(B, nc)  # dummy image features
+            return self.predict(x, x_features, *args, **kwargs)
+        
+    def convert_cls_to_features(self, batch: dict):
+        """Convert class label tensor to tensor of batch of one hot feature vectors"""
+        x_img, x_cls, x_bbox, x_batchidx = batch['img'], batch['cls'], batch['bboxes'], batch['batch_idx']
+        imgsz, device = x_img.shape[2:], x_img.device
+        n_img_features = self.yaml['nc'] // 2  # number of image features (assume there are 2 features per image source)
+        
+        batch_size = x_img.shape[0]
+        targets = torch.cat((x_batchidx.view(-1,1), x_cls.view(-1, 1), x_bbox), 1)
+        scale_tensor = torch.tensor([imgsz[1], imgsz[0], imgsz[1], imgsz[0]], device=device)
+        targets = prepare_batch_targets(targets.to(device), batch_size, scale_tensor=scale_tensor, device=device)
+        gt_labels, _ = targets.split((1, 4), 2)  # cls gt labels (B, n_gt_labels, 1)
+        
+        # create one-hot vectors for image features (e.g., image source) using gt labels
+        gt_labels = gt_labels.squeeze(-1).long()  # (B, n_gt_labels)
+        img_features = torch.zeros(gt_labels.shape[0], n_img_features)  # initialize and stack B number of source vectors (B, nc//2)
+        if gt_labels.shape[1] > 0:  # if at least one image in the batch has gt labels
+            img_features_indices = gt_labels[:, 0] // 2  # infer source from any gt label for all inputs in batch (B)
+            # Note: if gt_label[0]=0 and it means no labels, not class idx 0, then this will be handled during loss computation
+            img_features[torch.arange(gt_labels.shape[0]), img_features_indices] = 1  # assign 1 to source index for each source vector
+        return img_features
     
 
 class PoseContrastiveModel(PoseModel):
@@ -813,7 +788,7 @@ def attempt_load_weights(weights, device=None, inplace=True, fuse=False):
     # Module updates
     for m in ensemble.modules():
         t = type(m)
-        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, DetectContrastive, DetectMultiClsHeads, Segment):
+        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment):
             m.inplace = inplace
         elif t is nn.Upsample and not hasattr(m, 'recompute_scale_factor'):
             m.recompute_scale_factor = None  # torch 1.11.0 compatibility
@@ -849,7 +824,8 @@ def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
     # Module updates
     for m in model.modules():
         t = type(m)
-        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, DetectContrastive, DetectMultiClsHeads, Segment):
+        if t in (nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, 
+                 DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment):
             m.inplace = inplace
         elif t is nn.Upsample and not hasattr(m, 'recompute_scale_factor'):
             m.recompute_scale_factor = None  # torch 1.11.0 compatibility
@@ -913,7 +889,8 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
-        elif m in (Detect, DetectContrastive, DetectMultiClsHeads, Segment, Pose, PoseContrastive, PoseMultiClsHeads):
+        elif m in (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment, 
+                   Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead):
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
@@ -980,7 +957,8 @@ def guess_model_task(model):
         model (nn.Module | dict): PyTorch model or model configuration in YAML format.
 
     Returns:
-        (str): Task of the model ('detect', 'segment', 'classify', 'pose', 'pose-contrastive, pose-multiclsheads').
+        (str): Task of the model ('detect', 'segment', 'classify', 
+        'pose', 'pose-contrastive, pose-multiclsheads', 'pose-tunablehead').
 
     Raises:
         SyntaxError: If the task of the model could not be determined.
@@ -1001,6 +979,8 @@ def guess_model_task(model):
             return 'pose-contrastive'
         if m == 'posemulticlsheads':
             return 'pose-multiclsheads'
+        if m == 'posetunablehead':
+            return 'pose-tunablehead'
 
     # Guess from model cfg
     if isinstance(model, dict):
@@ -1029,6 +1009,8 @@ def guess_model_task(model):
                 return 'pose-contrastive'
             elif isinstance(m, PoseMultiClsHeads):
                 return 'pose-multiclsheads'
+            elif isinstance(m, PoseTunableHead):
+                return 'pose-tunablehead'
 
     # Guess from model filename
     if isinstance(model, (str, Path)):
@@ -1045,6 +1027,8 @@ def guess_model_task(model):
             return 'pose-contrastive'
         elif 'multiclsheads' in model.stem:
             return 'pose-multiclsheads'
+        elif 'tunablehead' in model.stem:
+            return 'pose-tunablehead'
 
     # Unable to determine task from model
     LOGGER.warning("WARNING ⚠️ Unable to automatically guess model task, assuming 'task=detect'. "

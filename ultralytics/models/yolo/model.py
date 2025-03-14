@@ -3,7 +3,7 @@
 from ultralytics.engine.model import Model
 from ultralytics.models import yolo  # noqa
 from ultralytics.nn.tasks import (ClassificationModel, DetectionModel, PoseModel, PoseContrastiveModel, 
-                                  PoseMultiClsHeadsModel, SegmentationModel)
+                                  PoseMultiClsHeadsModel, PoseTunableHeadModel, SegmentationModel)
 
 
 class YOLO(Model):
@@ -41,6 +41,11 @@ class YOLO(Model):
             'pose-multiclsheads': {
                 'model': PoseMultiClsHeadsModel,
                 'trainer': yolo.pose.PoseMultiClsHeadsTrainer,
+                'validator': yolo.pose.PoseValidator,
+                'predictor': yolo.pose.PosePredictor, },
+            'pose-tunablehead': {
+                'model': PoseTunableHeadModel,
+                'trainer': yolo.pose.PoseTunableHeadTrainer,
                 'validator': yolo.pose.PoseValidator,
                 'predictor': yolo.pose.PosePredictor, },
             }

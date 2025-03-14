@@ -149,9 +149,7 @@ class BaseValidator:
             self.dataloader = self.dataloader or self.get_dataloader(self.data.get(self.args.split), self.args.batch)
 
             model.eval()
-            # model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
-            img_features_sz = (1 if pt else self.args.batch, self.nc // 2)
-            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz), img_features_sz=img_features_sz)  # warmup
+            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
 
         self.run_callbacks('on_val_start')
         dt = Profile(), Profile(), Profile(), Profile()
@@ -162,60 +160,18 @@ class BaseValidator:
             self.run_callbacks('on_val_batch_start')
             self.batch_i = batch_i
 
-            # convert gt labels to one hot field vector 
-            # and DO THIS FOR THE DEDICATED TASK CLASS by creating a new class in pose/trainer.py and overwriting _do_train()
-            x_img, x_cls, x_bbox, x_batchidx = batch['img'], batch['cls'], batch['bboxes'], batch['batch_idx']
-            imgsz, device = x_img.shape[2:], x_img.device
-            n_img_features = self.nc // 2
-
-            # process gt cls labels
-            from ultralytics.utils.ops import xywh2xyxy
-            def preprocess(targets, batch_size, scale_tensor, device):
-                """Preprocesses the target counts and matches with the input batch size to output a tensor."""
-                if targets.shape[0] == 0:
-                    out = torch.zeros(batch_size, 0, 5, device=device)
-                else:
-                    i = targets[:, 0]  # image index
-                    _, counts = i.unique(return_counts=True)
-                    counts = counts.to(dtype=torch.int32)
-                    out = torch.zeros(batch_size, counts.max(), 5, device=device)
-                    for j in range(batch_size):
-                        matches = i == j
-                        n = matches.sum()
-                        if n:
-                            out[j, :n] = targets[matches, 1:]
-                    out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
-                return out
-            batch_size = x_img.shape[0]
-            targets = torch.cat((x_batchidx.view(-1,1), x_cls.view(-1, 1), x_bbox), 1)
-            scale_tensor = torch.tensor([imgsz[1], imgsz[0], imgsz[1], imgsz[0]], device=device)
-            targets = preprocess(targets.to(device), batch_size, scale_tensor=scale_tensor, device=device)
-            gt_labels, _ = targets.split((1, 4), 2)  # cls gt labels (B, n_gt_labels, 1)
-            
-            # create one-hot vectors for image features (e.g., image source) using gt labels
-            gt_labels = gt_labels.squeeze(-1).long()  # (B, n_gt_labels)
-            self.img_features = torch.zeros(gt_labels.shape[0], n_img_features)  # initialize and stack B number of source vectors (B, nc//2)
-            if gt_labels.shape[1] > 0:  # if at least one image has gt labels within the batch
-                img_features_indices = gt_labels[:, 0] // 2  # infer source from any gt label for all inputs in batch (B)
-                self.img_features[torch.arange(gt_labels.shape[0]), img_features_indices] = 1  # assign 1 to source index for each source vector
-
-            # add img_features to batch
-            self.img_features = self.img_features.half() if self.args.half else self.img_features.float()
-
             # Preprocess
             with dt[0]:
                 batch = self.preprocess(batch)
 
             # Inference
             with dt[1]:
-                # preds = model(batch['img'], augment=augment)
-                preds = model(batch['img'], self.img_features, augment=augment)
+                preds = model(batch['img'], augment=augment)
 
             # Loss
             with dt[2]:
                 if self.training:
-                    # self.loss += model.loss(batch, preds)[1]
-                    self.loss += model.loss(batch, self.img_features, preds)[1]
+                    self.loss += model.loss(batch, preds)[1]
 
             # Postprocess
             with dt[3]:
