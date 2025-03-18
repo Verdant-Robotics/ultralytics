@@ -171,3 +171,8 @@ class PoseTunableHeadTrainer(PoseTrainer):
 
         return model
     
+    def get_validator(self):
+        """Returns an instance of the PoseTunableHeadValidator class for validation."""
+        self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'trpl_loss', 'avg_logits'
+        return yolo.pose.PoseTunableHeadValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))
+    

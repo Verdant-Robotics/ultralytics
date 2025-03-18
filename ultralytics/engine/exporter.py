@@ -215,7 +215,8 @@ class Exporter:
         for _ in range(2):
             if isinstance(m, PoseTunableHeadModel):
                 y = model(im, image_features)  # take one hot vector of image features as extra input
-            y = model(im)  # dry runs
+            else:
+                y = model(im)  # dry runs
         if self.args.half and (engine or onnx) and self.device.type != 'cpu':
             # im, model = im.half(), model.half()  # to FP16
             im, image_features, model = im.half(), image_features.half(), model.half()  # to FP16

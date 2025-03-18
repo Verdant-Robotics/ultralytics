@@ -213,3 +213,43 @@ class PoseValidator(DetectionValidator):
             except Exception as e:
                 LOGGER.warning(f'pycocotools unable to run: {e}')
         return stats
+
+
+class PoseTunableHeadValidator(PoseValidator):
+    """
+    A class extending the PoseValidator class for validation based on a pose-tunablehead model.
+
+    Example:
+        ```python
+        from ultralytics.models.yolo.pose import PoseTunableHeadValidator
+
+        args = dict(model='yolov8n-pose-tunablehead.pt', data='coco8-pose.yaml')
+        validator = PoseTunableHeadValidator(args=args)
+        validator()
+        ```
+    """
+
+    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
+        """Initialize a 'PoseTunableHeadValidator' object with custom parameters and assigned attributes."""
+        super().__init__(dataloader, save_dir, pbar, args, _callbacks)
+        self.sigma = None
+        self.kpt_shape = None
+        self.args.task = 'pose-tunablehead'
+        self.metrics = PoseMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
+        if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
+            LOGGER.warning("WARNING ⚠️ Apple MPS known Pose bug. Recommend 'device=cpu' for Pose models. "
+                           'See https://github.com/ultralytics/ultralytics/issues/4031.')
+    
+    def preprocess(self, batch):
+        """Preprocesses the batch by converting the 'keypoints' data into a float and moving it to the device."""
+        batch = super().preprocess(batch)
+        from ultralytics.nn.tasks import convert_cls_to_features
+        image_features = convert_cls_to_features(batch, self.nc)
+        batch['img'] = (batch['img'], image_features)
+        return batch
+
+    def update_metrics(self, preds, batch):
+        """Metrics for pose-tunablehead model."""
+        # batch['img'] is a tuple (img, img_features) for this model
+        batch['img'] = batch['img'][0]  # extract just the image tensor from the tuple
+        super().update_metrics(preds, batch)

@@ -46,6 +46,6 @@ class YOLO(Model):
             'pose-tunablehead': {
                 'model': PoseTunableHeadModel,
                 'trainer': yolo.pose.PoseTunableHeadTrainer,
-                'validator': yolo.pose.PoseValidator,
+                'validator': yolo.pose.PoseTunableHeadValidator,
                 'predictor': yolo.pose.PosePredictor, },
             }

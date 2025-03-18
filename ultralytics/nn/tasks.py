@@ -47,6 +47,30 @@ def prepare_batch_targets(targets, batch_size, scale_tensor, device):
     return out
 
 
+def convert_cls_to_features(batch: dict, nc: int):
+    """Convert class label tensor to tensor of batch of one hot feature vectors"""
+    x_img, x_cls, x_bbox, x_batchidx = batch['img'], batch['cls'], batch['bboxes'], batch['batch_idx']
+    if isinstance(x_img, tuple):
+        x_img = x_img[0]  # extract image tensor from tuple
+    imgsz, device = x_img.shape[2:], x_img.device
+    n_img_features = nc // 2  # number of image features (assume there are 2 features per image source)
+    
+    batch_size = x_img.shape[0]
+    targets = torch.cat((x_batchidx.view(-1,1), x_cls.view(-1, 1), x_bbox), 1)
+    scale_tensor = torch.tensor([imgsz[1], imgsz[0], imgsz[1], imgsz[0]], device=device)
+    targets = prepare_batch_targets(targets.to(device), batch_size, scale_tensor=scale_tensor, device=device)
+    gt_labels, _ = targets.split((1, 4), 2)  # cls gt labels (B, n_gt_labels, 1)
+    
+    # create one-hot vectors for image features (e.g., image source) using gt labels
+    gt_labels = gt_labels.squeeze(-1).long()  # (B, n_gt_labels)
+    img_features = torch.zeros(gt_labels.shape[0], n_img_features)  # initialize and stack B number of source vectors (B, nc//2)
+    if gt_labels.shape[1] > 0:  # if at least one image in the batch has gt labels
+        img_features_indices = gt_labels[:, 0] // 2  # infer source from any gt label for all inputs in batch (B)
+        # Note: if gt_label[0]=0 and it means no labels, not class idx 0, then this will be handled during loss computation
+        img_features[torch.arange(gt_labels.shape[0]), img_features_indices] = 1  # assign 1 to source index for each source vector
+    return img_features
+
+
 class BaseModel(nn.Module):
     """The BaseModel class serves as a base class for all the models in the Ultralytics YOLO family."""
 
@@ -371,9 +395,8 @@ class PoseTunableHeadModel(PoseModel):
         Returns:
             (torch.Tensor): The last output of the model.
         """
-        
-        if augment:
-            return self._predict_augment(x, x_features)
+
+        # note that augmentation is disabled for this model
         return self._predict_once(x, x_features, profile, visualize)
 
     def _predict_once(self, x, x_features, profile=False, visualize=False):
@@ -408,12 +431,6 @@ class PoseTunableHeadModel(PoseModel):
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
         return x
-
-    def _predict_augment(self, x, x_features):
-        """Perform augmentations on input image x and return augmented inference."""
-        LOGGER.warning(f'WARNING ⚠️ {self.__class__.__name__} does not support augmented inference yet. '
-                    f'Reverting to single-scale inference instead.')
-        return self._predict_once(x, x_features)
     
     def loss(self, batch, preds=None):
         """
@@ -426,9 +443,9 @@ class PoseTunableHeadModel(PoseModel):
         if not hasattr(self, 'criterion'):
             self.criterion = self.init_criterion()
 
-        x_features = self.convert_cls_to_features(batch)  # convert class labels to one hot feature vectors
+        x_features = convert_cls_to_features(batch, self.yaml['nc'])  # convert class labels to one hot feature vectors
         
-        preds = self.forward((batch['img'], x_features)) if preds is None else preds
+        preds = self.predict(batch['img'], x_features) if preds is None else preds
         return self.criterion(preds, batch)
     
     def forward(self, x, x_features=None, *args, **kwargs):
@@ -442,14 +459,10 @@ class PoseTunableHeadModel(PoseModel):
         Returns:
             (torch.Tensor): The output of the network.
         """
-        if isinstance(x, dict):  # case: training / validator
-            if self.training:
-                return self.loss(x, *args, **kwargs)
-            else:
-                x_features = self.convert_cls_to_features(x)  # convert class labels to one hot feature vectors
-                return self.predict([x['img'], x_features], *args, **kwargs)
+        if isinstance(x, dict):  # case: training
+            return self.loss(x, *args, **kwargs)
 
-        elif isinstance(x, tuple):  # case: inference inside training / validation
+        elif isinstance(x, tuple):  # case: validation
             x, x_features = x  # img, img features
             return self.predict(x, x_features, *args, **kwargs)
         
@@ -457,29 +470,8 @@ class PoseTunableHeadModel(PoseModel):
             if x_features is None:
                 B = x.shape[0]
                 nc = self.yaml['nc']
-                x_features = torch.zeros(B, nc//2) if nc != 1 else torch.zeros(B, nc)  # dummy image features
+                x_features = torch.zeros(B, nc // 2) if nc != 1 else torch.zeros(B, nc)  # dummy image features
             return self.predict(x, x_features, *args, **kwargs)
-        
-    def convert_cls_to_features(self, batch: dict):
-        """Convert class label tensor to tensor of batch of one hot feature vectors"""
-        x_img, x_cls, x_bbox, x_batchidx = batch['img'], batch['cls'], batch['bboxes'], batch['batch_idx']
-        imgsz, device = x_img.shape[2:], x_img.device
-        n_img_features = self.yaml['nc'] // 2  # number of image features (assume there are 2 features per image source)
-        
-        batch_size = x_img.shape[0]
-        targets = torch.cat((x_batchidx.view(-1,1), x_cls.view(-1, 1), x_bbox), 1)
-        scale_tensor = torch.tensor([imgsz[1], imgsz[0], imgsz[1], imgsz[0]], device=device)
-        targets = prepare_batch_targets(targets.to(device), batch_size, scale_tensor=scale_tensor, device=device)
-        gt_labels, _ = targets.split((1, 4), 2)  # cls gt labels (B, n_gt_labels, 1)
-        
-        # create one-hot vectors for image features (e.g., image source) using gt labels
-        gt_labels = gt_labels.squeeze(-1).long()  # (B, n_gt_labels)
-        img_features = torch.zeros(gt_labels.shape[0], n_img_features)  # initialize and stack B number of source vectors (B, nc//2)
-        if gt_labels.shape[1] > 0:  # if at least one image in the batch has gt labels
-            img_features_indices = gt_labels[:, 0] // 2  # infer source from any gt label for all inputs in batch (B)
-            # Note: if gt_label[0]=0 and it means no labels, not class idx 0, then this will be handled during loss computation
-            img_features[torch.arange(gt_labels.shape[0]), img_features_indices] = 1  # assign 1 to source index for each source vector
-        return img_features
     
 
 class PoseContrastiveModel(PoseModel):

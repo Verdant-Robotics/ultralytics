@@ -2,7 +2,7 @@
 
 from .predict import PosePredictor
 from .train import PoseTrainer, PoseContrastiveTrainer, PoseMultiClsHeadsTrainer, PoseTunableHeadTrainer
-from .val import PoseValidator
+from .val import PoseValidator, PoseTunableHeadValidator
 
 __all__ = 'PoseTrainer', 'PoseContrastiveTrainer', 'PoseMultiClsHeadsTrainer', 'PoseTunableHeadTrainer', \
-    'PoseValidator', 'PosePredictor'
+    'PoseValidator', 'PoseTunableHeadValidator', 'PosePredictor'

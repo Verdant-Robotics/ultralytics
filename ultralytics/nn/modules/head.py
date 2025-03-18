@@ -274,15 +274,22 @@ class DetectTunableHead(nn.Module):
         self.cv3_features = nn.ModuleList(nn.Sequential(Conv(x+self.n_sources, c3, 3), 
                                                Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
 
-    def forward(self, x):
+    def forward(self, x, x_features):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
         shape = x[0].shape  # BCHW
 
-        for i, xi in enumerate(x):  # per detection scale
-            x_img = xi[:, :-self.n_sources, :, :]  # split to get image tensor
-            x_img = x_img.to(self.cv2[i][-1].weight.dtype)
-            xi = xi.to(self.cv3_features[i][-1].weight.dtype)
-            x[i] = torch.cat((self.cv2[i](x_img), self.cv3_features[i](xi)), 1)
+        # reshape one hot feature vector (1D) to concatenate with input image tensor (x)
+        device = x[0].device
+        x_features_reshaped = []
+        for i in range(self.nl):  # per detection scale
+            B, _, H, W = x[i].shape  # different (H, W) shape per detection scale (e.g., 24x24, 48x48, 96x96)
+            x_features_reshaped.append(x_features.view(B, -1, 1, 1).expand(B, -1, H, W).to(device))  # (B, nc//2, H, W)
+
+        for i, (x_i, x_features_reshaped_i) in enumerate(zip(x, x_features_reshaped)):  # per detection scale
+            x_with_features_i = torch.cat((x_i, x_features_reshaped_i), 1)
+            x_with_features_i = x_with_features_i.to(self.cv3_features[i][-1].weight.dtype)
+            x_i = x_i.to(self.cv2[i][-1].weight.dtype)
+            x[i] = torch.cat((self.cv2[i](x_i), self.cv3_features[i](x_with_features_i)), 1)
         if self.training:
             return x
         elif self.dynamic or self.shape != shape:
@@ -404,18 +411,7 @@ class PoseTunableHead(DetectTunableHead):
         bs = x[0].shape[0]  # batch size
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
 
-        # reshape one hot feature vector (1D) to concatenate with input image tensor (x)
-        device = x[0].device
-        x_features_reshaped = []
-        for i in range(self.nl):  # per detection scale
-            B, _, H, W = x[i].shape  # different (H, W) shape per detection scale (e.g., 24x24, 48x48, 96x96)
-            x_features_reshaped.append(x_features.view(B, -1, 1, 1).expand(B, -1, H, W).to(device))  # (B, nc//2, H, W)
-
-        # concatenate x with one hot feature vector
-        x_with_features = [torch.concat((xi, x_features_reshaped_i), dim=1) for 
-                           (xi, x_features_reshaped_i) in zip(x, x_features_reshaped)]  # (B, C+nc//2, H, W)
-
-        x = self.detect(self, x_with_features)
+        x = self.detect(self, x, x_features)
         if self.training:
             return x, kpt
         pred_kpt = self.kpts_decode(bs, kpt)
