@@ -65,8 +65,8 @@ from ultralytics.cfg import get_cfg
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import check_det_dataset
 from ultralytics.nn.autobackend import check_class_names
-from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder, DetectContrastive, DetectMultiClsHeads
-from ultralytics.nn.tasks import DetectionModel, SegmentationModel, PoseContrastiveModel, PoseMultiClsHeadsModel
+from ultralytics.nn.modules import C2f, Detect, RTDETRDecoder, DetectContrastive, DetectMultiClsHeads, DetectTunableHead
+from ultralytics.nn.tasks import DetectionModel, SegmentationModel, PoseContrastiveModel, PoseMultiClsHeadsModel, PoseTunableHeadModel
 from ultralytics.utils import (ARM64, DEFAULT_CFG, LINUX, LOGGER, MACOS, ROOT, WINDOWS, __version__, callbacks,
                                colorstr, get_default_args, yaml_save)
 from ultralytics.utils.checks import check_imgsz, check_requirements, check_version
@@ -188,6 +188,8 @@ class Exporter:
 
         # Input
         im = torch.zeros(self.args.batch, 3, *self.imgsz).to(self.device)
+        image_features = torch.zeros(self.args.batch, model.nc // 2).to(self.device)
+
         file = Path(
             getattr(model, 'pt_path', None) or getattr(model, 'yaml_file', None) or model.yaml.get('yaml_file', ''))
         if file.suffix in {'.yaml', '.yml'}:
@@ -201,7 +203,7 @@ class Exporter:
         model.float()
         model = model.fuse()
         for m in model.modules():
-            if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, RTDETRDecoder)):  # Segment and Pose use Detect base class
+            if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, RTDETRDecoder)):  # Segment and Pose use Detect base class
                 m.dynamic = self.args.dynamic
                 m.export = True
                 m.format = self.args.format
@@ -211,9 +213,13 @@ class Exporter:
 
         y = None
         for _ in range(2):
-            y = model(im)  # dry runs
+            if isinstance(m, PoseTunableHeadModel):
+                y = model(im, image_features)  # take one hot vector of image features as extra input
+            else:
+                y = model(im)  # dry runs
         if self.args.half and (engine or onnx) and self.device.type != 'cpu':
-            im, model = im.half(), model.half()  # to FP16
+            # im, model = im.half(), model.half()  # to FP16
+            im, image_features, model = im.half(), image_features.half(), model.half()  # to FP16
 
         # Filter warnings
         warnings.filterwarnings('ignore', category=torch.jit.TracerWarning)  # suppress TracerWarning
@@ -222,6 +228,7 @@ class Exporter:
 
         # Assign
         self.im = im
+        self.image_features = image_features
         self.model = model
         self.file = file
         self.output_shape = tuple(y.shape) if isinstance(y, torch.Tensor) else tuple(
@@ -240,7 +247,7 @@ class Exporter:
             'batch': self.args.batch,
             'imgsz': self.imgsz,
             'names': model.names}  # model metadata
-        if model.task in {'pose', 'pose-contrastive', 'pose-multiclsheads'}:
+        if model.task in {'pose', 'pose-contrastive', 'pose-multiclsheads', 'pose-tunablehead'}:
             self.metadata['kpt_shape'] = model.model[-1].kpt_shape
 
         LOGGER.info(f"\n{colorstr('PyTorch:')} starting from '{file}' with input shape {tuple(im.shape)} BCHW and "
@@ -322,13 +329,23 @@ class Exporter:
         LOGGER.info(f'\n{prefix} starting export with onnx {onnx.__version__} opset {opset_version}...')
         f = str(self.file.with_suffix('.onnx'))
 
+        # default input name and input tensor
+        input_names = ['images']  # input node names
+        inputs = self.im.cpu() if self.args.dynamic else self.im  # input image tensor (dynamic input only supports cpu)
+
         if isinstance(self.model, SegmentationModel):
             output_names = ['output0', 'output1']
         elif isinstance(self.model, PoseContrastiveModel):
             print('Exporting pose contrastive model')
             output_names = ['output0', 'embeddings']
+        elif isinstance(self.model, PoseTunableHeadModel):
+            input_names = ['images', 'image_features']
+            output_names = ['output0']
+            inputs = (self.im.cpu() if self.args.dynamic else self.im, 
+                      self.image_features.cpu() if self.args.dynamic else self.image_features)
         else:
             output_names = ['output0']
+        
         dynamic = self.args.dynamic
         if dynamic:
             dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'}}  # shape(1,3,640,640)
@@ -343,12 +360,12 @@ class Exporter:
 
         torch.onnx.export(
             self.model.cpu() if dynamic else self.model,  # dynamic=True only compatible with cpu
-            self.im.cpu() if dynamic else self.im,
+            inputs,
             f,
             verbose=False,
             opset_version=opset_version,
             do_constant_folding=True,  # WARNING: DNN inference with torch>=1.12 may require do_constant_folding=False
-            input_names=['images'],
+            input_names=input_names,
             output_names=output_names,
             dynamic_axes=dynamic or None)
 

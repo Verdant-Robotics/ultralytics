@@ -337,11 +337,20 @@ class AutoBackend(nn.Module):
         Returns:
             (tuple): Tuple containing the raw output tensor, and processed output for visualization (if visualize=True)
         """
-        b, ch, h, w = im.shape  # batch, channel, height, width
-        if self.fp16 and im.dtype != torch.float16:
-            im = im.half()  # to FP16
-        if self.nhwc:
-            im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
+        def prepare_image(im):
+
+            if self.fp16 and im.dtype != torch.float16:
+                im = im.half()  # to FP16
+            if self.nhwc:
+                im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
+            return im
+        
+        if isinstance(im, tuple):
+            im = (prepare_image(im[0]), im[1])
+            b, ch, h, w = im[0].shape  # batch, channels, height, width
+        else:
+            im = prepare_image(im)
+            b, ch, h, w = im.shape  # batch, channels, height, width
 
         if self.pt or self.nn_module:  # PyTorch
             y = self.model(im, augment=augment, visualize=visualize) if augment or visualize else self.model(im)
