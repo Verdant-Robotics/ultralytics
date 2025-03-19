@@ -232,8 +232,6 @@ class PoseTunableHeadValidator(PoseValidator):
     def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
         """Initialize a 'PoseTunableHeadValidator' object with custom parameters and assigned attributes."""
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
-        self.sigma = None
-        self.kpt_shape = None
         self.args.task = 'pose-tunablehead'
         self.metrics = PoseMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
         if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':

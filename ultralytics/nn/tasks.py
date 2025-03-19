@@ -30,7 +30,7 @@ except ImportError:
 
 
 def prepare_batch_targets(targets, batch_size, scale_tensor, device):
-    """Preprocesses the target counts and matches with the input batch size to output a tensor."""
+    """Reorganizes detection targets into a standardized batch format."""
     if targets.shape[0] == 0:
         out = torch.zeros(batch_size, 0, 5, device=device)
     else:
@@ -43,7 +43,7 @@ def prepare_batch_targets(targets, batch_size, scale_tensor, device):
             n = matches.sum()
             if n:
                 out[j, :n] = targets[matches, 1:]
-        out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))  #TODO: remove 1:5 for bbox, just keep 0 for cls
+        out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
     return out
 
 
