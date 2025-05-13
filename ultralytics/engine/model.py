@@ -333,6 +333,7 @@ class Model(nn.Module):
         if args.get('resume'):
             args['resume'] = self.ckpt_path
 
+
         self.trainer = (trainer or self._smart_load('trainer'))(overrides=args, _callbacks=self.callbacks)
         if not args.get('resume'):  # manually set model only if not resuming
             self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)

@@ -24,6 +24,7 @@ if __name__ == "__main__":
 
     PrepareDataset(coco_classes_file, dataset_yaml_path, training_task)
 
+
     if args.load is not None:
         if os.path.exists(args.load):
             model = YOLO(args.load)
@@ -31,7 +32,6 @@ if __name__ == "__main__":
             print(f"[ERROR] : Model {args.load} does not exists")
             exit(1)
     else:
-        print('getYamlMidel: ', GetModelYaml(training_task))
         model = YOLO(GetModelYaml(training_task))  # Initialize model
 
     if args.disable_wandb:

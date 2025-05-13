@@ -375,25 +375,52 @@ class Pose(Detect):
         pred_kpt = self.kpts_decode(bs, kpt)
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
 
-    def kpts_decode(self, bs, kpts):
-        """Decodes keypoints."""
-        ndim = self.kpt_shape[1]
-        if self.export:  # required for TFLite export to avoid 'PLACEHOLDER_FOR_GREATER_OP_CODES' bug
-            y = kpts.view(bs, *self.kpt_shape, -1)
-            a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
-            if ndim == 3:
-                a = torch.cat((a, y[:, :, 2:3].sigmoid()), 2)
-            return a.view(bs, self.nk, -1)
+
+class DetectWithExtraInfo(Detect):
+    def __init__(self, nc=80, ch=()):
+        """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
+        super().__init__(nc, ch)
+        self.no = nc + self.reg_max * 4 + 1 # +1 to store an extra logit
+        
+        # To store extra information:
+        c4 = max(16, ch[0] // 4) 
+        self.cv_inside = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1, 1)) for x in ch)
+
+
+    def forward(self, x):
+        """Concatenates and returns predicted bounding boxes and class probabilities."""
+        shape = x[0].shape  # BCHW
+        for i in range(self.nl):  # per detection scale
+            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv_inside[i](x[i])), 1)
+
+        if self.training:
+            return x
+        elif self.dynamic or self.shape != shape:
+            self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
+            self.shape = shape
+
+        x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
+        if self.export and self.format in ('saved_model', 'pb', 'tflite', 'edgetpu', 'tfjs'):  # avoid TF FlexSplitV ops
+            box = x_cat[:, :self.reg_max * 4]
+            cls = x_cat[:, self.reg_max * 4:]
         else:
-            y = kpts.clone()
-            if ndim == 3:
-                y[:, 2::3].sigmoid_()  # inplace sigmoid
-            y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
-            y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
-            return y
+            box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
+        dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
+
+        if self.export and self.format in ('tflite', 'edgetpu'):
+            # Normalize xywh with image size to mitigate quantization error of TFLite integer models as done in YOLOv5:
+            # https://github.com/ultralytics/yolov5/blob/0c8de3fca4a702f8ff5c435e67f378d1fce70243/models/tf.py#L307-L309
+            # See this PR for details: https://github.com/ultralytics/ultralytics/pull/1695
+            img_h = shape[2] * self.stride[0]
+            img_w = shape[3] * self.stride[0]
+            img_size = torch.tensor([img_w, img_h, img_w, img_h], device=dbox.device).reshape(1, 4, 1)
+            dbox /= img_size
+
+        y = torch.cat((dbox, cls.sigmoid()), 1)
+        return y if self.export else (y, x)
 
 
-class PoseSeg(Detect):
+class PoseSeg(DetectWithExtraInfo):
     """YOLOv8 Pose head for keypoints models."""
 
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
@@ -401,20 +428,28 @@ class PoseSeg(Detect):
         super().__init__(nc, ch)
         self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
         self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
-        self.detect = Detect.forward
-
         c4 = max(ch[0] // 4, self.nk)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1)) for x in ch)
 
+        self.detect = DetectWithExtraInfo.forward
+
+
     def forward(self, x):
         """Perform forward pass through YOLO model and return predictions."""
+        # x = [P3, P4, P5]
+        # each P is (bs, c_i, h_i, w_i) # c_i  = ch[i]
         bs = x[0].shape[0]  # batch size
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
+        # Per each image in the batch, it detecs where it's keypoints are located
+        # In our case is (bs, 3->(x, y, v), h*w)
+        # kpt = [bs, 17*3, h*w]
         x = self.detect(self, x)
+        
         if self.training:
             return x, kpt
         pred_kpt = self.kpts_decode(bs, kpt)
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+    
 
     def kpts_decode(self, bs, kpts):
         """Decodes keypoints."""

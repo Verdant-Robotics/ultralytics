@@ -283,11 +283,11 @@ class DetectionModel(BaseModel):
         # Build strides
         m = self.model[-1]  # Detect()
         if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment, 
-                          Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead)):
+                          Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead, PoseSeg)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads, 
-                                                                     PoseTunableHead)) else self.forward(x)
+                                                                     PoseTunableHead, PoseSeg)) else self.forward(x)
             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -901,7 +901,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
         elif m in (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment, 
-                   Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead):
+                   Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead, PoseSeg):
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)

@@ -9,7 +9,6 @@ runs_directory = os.environ.get("RUNS_DIR", "/training/runs")
 training_task = os.environ.get("TASK", "detect")   # 'detect' for bbox | 'pose' for hybrid model
 experiment_name = os.environ.get("EXP_NAME", None)  # Results will be saved with this name  under runs/<task>/<exp_name>
 
-
 def PrepareDataset(coco_classes_file, dataset_yaml, training_task):
     classes = []
     with open(coco_classes_file, "r") as f:
@@ -27,7 +26,8 @@ def PrepareDataset(coco_classes_file, dataset_yaml, training_task):
         for i in range(len(classes)):
             f.write(f"  {i}: {classes[i]}\n")
         if training_task == "pose" or training_task == "pose-contrastive" \
-        or training_task == "pose-multiclsheads" or training_task == "pose-tunablehead":
+        or training_task == "pose-multiclsheads" or training_task == "pose-tunablehead"\
+        or training_task == "pose-segmentation":
             f.write("\nkpt_shape: [1, 3]\n")  # enforce keypoint shape to [1, 3] for pose models
             f.write("flip_idx: [0]\n")  # enforce left-right flipping of keypoints
     return

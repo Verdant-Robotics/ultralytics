@@ -374,78 +374,6 @@ class v8SegmentationLoss(v8DetectionLoss):
         return loss / fg_mask.sum()
 
 
-class v8PoseSegLoss(v8DetectionLoss):
-    """Criterion class for computing training losses."""
-
-    def __init__(self, model):  # model must be de-paralleled
-        """Initializes v8PoseLoss with model, sets keypoint variables and declares a keypoint loss instance."""
-        super().__init__(model)
-        self.kpt_shape = model.model[-1].kpt_shape
-        self.bce_pose = nn.BCEWithLogitsLoss()
-        is_pose = self.kpt_shape == [17, 3]
-        nkpt = self.kpt_shape[0]  # number of keypoints
-        sigmas = torch.from_numpy(OKS_SIGMA).to(self.device) if is_pose else torch.ones(nkpt, device=self.device) / nkpt
-        self.keypoint_loss = KeypointLoss(sigmas=sigmas)
-
-    def __call__(self, preds, batch):
-        """Calculate the total loss and detach it."""
-        loss = torch.zeros(5, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
-        feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
-        pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
-            (self.reg_max * 4, self.nc), 1)
-
-        # B, grids, ..
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
-        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
-        pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
-
-        dtype = pred_scores.dtype
-        imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
-        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
-
-        # Targets
-        batch_size = pred_scores.shape[0]
-        batch_idx = batch['batch_idx'].view(-1, 1)
-        targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1)
-        targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
-        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
-
-        # Pboxes
-        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
-        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
-
-        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
-            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
-
-        target_scores_sum = max(target_scores.sum(), 1)
-
-        # Cls loss
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
-        loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
-
-        # Bbox loss
-        if fg_mask.sum():
-            target_bboxes /= stride_tensor
-            loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
-                                              target_scores_sum, fg_mask)
-            keypoints = batch['keypoints'].to(self.device).float().clone()
-            keypoints[..., 0] *= imgsz[1]
-            keypoints[..., 1] *= imgsz[0]
-
-            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
-                                                             stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
-
-        loss[0] *= self.hyp.box  # box gain
-        loss[1] *= self.hyp.pose  # pose gain
-        loss[2] *= self.hyp.kobj  # kobj gain
-        loss[3] *= self.hyp.cls  # cls gain
-        loss[4] *= self.hyp.dfl  # dfl gain
-
-        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
-
-
 class v8PoseLoss(v8DetectionLoss):
     """Criterion class for computing training losses."""
 
@@ -596,6 +524,149 @@ class v8PoseLoss(v8DetectionLoss):
                 kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())  # keypoint obj loss
 
         return kpts_loss, kpts_obj_loss
+
+
+
+class v8PoseSegLoss(v8PoseLoss):
+    """Criterion class for computing training losses."""
+    def __init__(self, model):  # model must be de-paralleled
+        """Initializes v8PoseLoss with model, sets keypoint variables and declares a keypoint loss instance."""
+        super().__init__(model)
+        self.bce_inside = nn.BCEWithLogitsLoss()
+
+
+    def __call__(self, preds, batch):
+        """Calculate the total loss and detach it."""
+        loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, inside/outside
+
+        feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
+
+        # TODO
+        all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
+        pred_distri, rest = all_preds.split((self.reg_max * 4, self.nc + 1), 1)
+        pred_scores, pred_inside = rest.split((self.nc, 1), 1)
+
+
+        # B, grids, ..
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+        pred_distri = pred_distri.permute(0, 2, 1).contiguous()
+        pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
+        
+        pred_inside = pred_inside.permute(0, 2, 1).contiguous()  # ava
+
+        dtype = pred_scores.dtype
+        imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
+        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
+
+        # Targets
+        batch_size = pred_scores.shape[0]
+        batch_idx = batch['batch_idx'].view(-1, 1)
+        targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1)
+        targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
+
+        # Pboxes
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
+        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
+
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+
+        target_scores_sum = max(target_scores.sum(), 1)
+
+        # Cls loss
+        loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
+
+
+        # Generate inside/outside targets
+        # The target for inside/outside prediction is 1 if the anchor is inside the ground truth bbox
+        # anchor_points: These are the center coordinates of each anchor
+        # gt_bboxes: The ground truth bounding boxes for the objects in the image
+        # target_gt_idx: Indices that tell which ground truth box is assigned to each anchor
+        # fg_mask: A mask indicating which anchors are foreground (assigned to an object)
+        # stride_tensor: Used to scale the anchor points to match the scale of the ground truth boxes
+        inside_targets = self.generate_inside_targets(anchor_points, gt_bboxes, target_gt_idx, fg_mask, stride_tensor)
+        # If there exists any anchors that has a boundary box, calculate the loss
+        if fg_mask.sum() > 0:
+            loss[5] = self.bce_inside(pred_inside[fg_mask], inside_targets[fg_mask].to(dtype)).sum() / max(fg_mask.sum(), 1)
+
+
+        # Bbox loss
+        if fg_mask.sum():
+            target_bboxes /= stride_tensor
+            loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                              target_scores_sum, fg_mask)
+            keypoints = batch['keypoints'].to(self.device).float().clone()
+            keypoints[..., 0] *= imgsz[1]
+            keypoints[..., 1] *= imgsz[0]
+
+            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
+                                                             stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
+
+
+        loss[0] *= self.hyp.box  # box gain
+        loss[1] *= self.hyp.pose  # pose gain
+        loss[2] *= self.hyp.kobj  # kobj gain
+        loss[3] *= self.hyp.cls  # cls gain
+        loss[4] *= self.hyp.dfl  # dfl gain
+        loss[5] *= 1.0 # ava: inside/outside gain
+        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
+
+
+
+    def generate_inside_targets(self, anchor_points, gt_bboxes, target_gt_idx, fg_mask, stride_tensor):
+        """
+        Generate targets for inside/outside prediction.
+        
+        Args:
+            anchor_points: anchor points coordinates
+            gt_bboxes: ground truth bounding boxes
+            target_gt_idx: indices of assigned ground truth boxes
+            fg_mask: foreground mask
+            stride_tensor: stride tensor for scaling
+            
+        Returns:
+            inside_targets: tensor with 1 for anchors inside the bounding box, 0 otherwise
+        """
+        batch_size = gt_bboxes.shape[0]
+        num_anchors = anchor_points.shape[0]
+    
+        inside_targets = torch.zeros((batch_size, num_anchors, 1), device=self.device)
+        scaled_anchor_points = anchor_points * stride_tensor
+        
+        for batch_idx in range(batch_size):
+            # Get foreground mask for this image
+            img_fg_mask = fg_mask[batch_idx]
+            if not img_fg_mask.any():
+                continue
+                
+            # Get indices of assigned gt boxes for this image
+            img_gt_idx = target_gt_idx[batch_idx][img_fg_mask]
+            
+            # Get the anchor points that are foreground
+            fg_anchor_points = scaled_anchor_points[img_fg_mask]
+            
+            # For each foreground anchor point
+            for i, (anchor_point, gt_idx) in enumerate(zip(fg_anchor_points, img_gt_idx)):
+                # Get corresponding gt box
+                gt_box = gt_bboxes[batch_idx, gt_idx]
+                
+                # Check if anchor point is inside the gt box
+                is_inside = (
+                    anchor_point[0] >= gt_box[0] and 
+                    anchor_point[0] <= gt_box[2] and 
+                    anchor_point[1] >= gt_box[1] and 
+                    anchor_point[1] <= gt_box[3]
+                )
+                
+                # Set target value
+                idx = torch.where(img_fg_mask)[0][i]
+                inside_targets[batch_idx, idx] = 1.0 if is_inside else 0.0
+                
+        return inside_targets
+
 
 
 class v8PoseTunableHeadLoss(v8PoseLoss):
