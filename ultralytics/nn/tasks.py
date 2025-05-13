@@ -11,12 +11,12 @@ from ultralytics.nn.modules import (AIFI, C1, C2, C3, C3TR, SPP, SPPF, Bottlenec
                                     Classify, Concat, Conv, Conv2, ConvTranspose, Detect, DetectContrastive, 
                                     DetectMultiClsHeads, DetectTunableHead, DWConv, DWConvTranspose2d,
                                     Focus, GhostBottleneck, GhostConv, HGBlock, HGStem, Pose, PoseContrastive, 
-                                    PoseMultiClsHeads, PoseTunableHead, RepC3, RepConv, RTDETRDecoder, Segment
+                                    PoseMultiClsHeads, PoseTunableHead, RepC3, RepConv, RTDETRDecoder, Segment, PoseSeg
                                     )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, 
-                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss
+                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss, v8PoseSegLoss
                                     )
 from ultralytics.utils.plotting import feature_visualization
 from ultralytics.utils.torch_utils import (fuse_conv_and_bn, fuse_deconv_and_bn, initialize_weights, intersect_dicts,
@@ -300,6 +300,7 @@ class DetectionModel(BaseModel):
             self.info()
             LOGGER.info('')
 
+
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
         img_size = x.shape[-2:]  # height, width
@@ -354,7 +355,7 @@ class SegmentationModel(DetectionModel):
 
 
 class PoseModel(DetectionModel):
-    """YOLOv8 pose model."""
+    """YOLOv8 pose Seg model."""
 
     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         """Initialize YOLOv8 Pose model."""
@@ -368,6 +369,24 @@ class PoseModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseLoss(self)
+    
+
+class PoseSegModel(DetectionModel):
+    """YOLOv8 pose model."""
+
+    def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+        """Initialize YOLOv8 Pose model."""
+        if not isinstance(cfg, dict):
+            cfg = yaml_model_load(cfg)  # load model YAML
+        if any(data_kpt_shape) and list(data_kpt_shape) != list(cfg['kpt_shape']):
+            LOGGER.info(f"Overriding model.yaml kpt_shape={cfg['kpt_shape']} with kpt_shape={data_kpt_shape}")
+            cfg['kpt_shape'] = data_kpt_shape
+        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+
+    def init_criterion(self):
+        """Initialize the loss criterion for the PoseModel."""
+        return v8PoseSegLoss(self)
+
 
 
 class PoseTunableHeadModel(PoseModel):
@@ -973,6 +992,8 @@ def guess_model_task(model):
             return 'pose-multiclsheads'
         if m == 'posetunablehead':
             return 'pose-tunablehead'
+        if m == 'poseseg':
+            return 'pose-segmentation'
 
     # Guess from model cfg
     if isinstance(model, dict):

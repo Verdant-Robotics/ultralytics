@@ -31,6 +31,7 @@ if __name__ == "__main__":
             print(f"[ERROR] : Model {args.load} does not exists")
             exit(1)
     else:
+        print('getYamlMidel: ', GetModelYaml(training_task))
         model = YOLO(GetModelYaml(training_task))  # Initialize model
 
     if args.disable_wandb:
@@ -42,16 +43,16 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=300,
+        epochs=1,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
         mosaic=0.0,  # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
-        imgsz=768,
+        imgsz=32,
         seed=1,
-        batch=128,
+        batch=2,
         name=experiment_name,
-        device=[0, 1, 2, 3, 4, 5, 6, 7],
+        device=[0],
         patience=50,
     )
 

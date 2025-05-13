@@ -16,7 +16,7 @@ from .utils import bias_init_with_prob, linear_init_
 # from ultralytics.utils.ops import xywh2xyxy
 
 __all__ = ('Detect', 'DetectContrastive', 'DetectMultiClsHeads', 'DetectTunableHead', 'Segment', 
-           'Pose', 'PoseContrastive', 'PoseMultiClsHeads', 'PoseTunableHead', 'Classify', 'RTDETRDecoder')
+           'Pose', 'PoseContrastive', 'PoseMultiClsHeads', 'PoseTunableHead', 'Classify', 'RTDETRDecoder', 'PoseSeg')
 
 class Detect(nn.Module):
     """YOLOv8 Detect head for detection models."""
@@ -391,7 +391,48 @@ class Pose(Detect):
             y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
             y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
             return y
-    
+
+
+class PoseSeg(Detect):
+    """YOLOv8 Pose head for keypoints models."""
+
+    def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
+        """Initialize YOLO network with default parameters and Convolutional Layers."""
+        super().__init__(nc, ch)
+        self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+        self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
+        self.detect = Detect.forward
+
+        c4 = max(ch[0] // 4, self.nk)
+        self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1)) for x in ch)
+
+    def forward(self, x):
+        """Perform forward pass through YOLO model and return predictions."""
+        bs = x[0].shape[0]  # batch size
+        kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
+        x = self.detect(self, x)
+        if self.training:
+            return x, kpt
+        pred_kpt = self.kpts_decode(bs, kpt)
+        return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+
+    def kpts_decode(self, bs, kpts):
+        """Decodes keypoints."""
+        ndim = self.kpt_shape[1]
+        if self.export:  # required for TFLite export to avoid 'PLACEHOLDER_FOR_GREATER_OP_CODES' bug
+            y = kpts.view(bs, *self.kpt_shape, -1)
+            a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
+            if ndim == 3:
+                a = torch.cat((a, y[:, :, 2:3].sigmoid()), 2)
+            return a.view(bs, self.nk, -1)
+        else:
+            y = kpts.clone()
+            if ndim == 3:
+                y[:, 2::3].sigmoid_()  # inplace sigmoid
+            y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
+            y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
+            return y
+
 
 class PoseTunableHead(DetectTunableHead):
     """YOLOv8 Pose head for keypoints models with a tunable classification head based on extra input features."""

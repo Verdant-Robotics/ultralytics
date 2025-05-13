@@ -44,6 +44,9 @@ def GetModelYaml(task):
         return "yolov8n-pose-multiclsheads.yaml"
     elif task == "pose-tunablehead":
         return "yolov8n-pose-tunablehead.yaml"
+    elif task == "pose-segmentation":
+        return "yolov8n-pose-seg.yaml"
+
     print(f"Unknown task {task}")
     return None
 
