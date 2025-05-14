@@ -542,9 +542,9 @@ class v8PoseSegLoss(v8PoseLoss):
 
         # 68 = 64 + 2(nc) + 2(extra_info_ch_size)
         # extra_info_ch_size = 
-        # feats = x from heads.py
-        # (Pdb) feats[0].shape
-        # torch.Size([2, 68, 4, 4])
+        # feats = x from heads.py 
+        # (Pdb) feats[0].shape 
+        # torch.Size([2, 68, 4, 4]) (bs, ch, h, w)
         # (Pdb) feats[1].shape
         # torch.Size([2, 68, 2, 2])
         # (Pdb) feats[2].shape
@@ -620,35 +620,15 @@ class v8PoseSegLoss(v8PoseLoss):
         # torch.Size([2, 21, 2])
         # (Pdb) fg_mask.shape
         # torch.Size([2, 21]) -> (bs, anchors that are gt 1 else 0)
-        # (Pdb) target_gt_idx.shape # which anchor is assigned to which gt
+        # (Pdb) target_gt_idx.shape -> which gt is assigned to which anchor
         # torch.Size([2, 21])
 
         # Cls loss
         loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
-        breakpoint()
 
-        # (Pdb) pred_inside.shape
-        # torch.Size([2, 21, 2]) (bs, anchors, extra_info_ch_size)
-
-    # self, anchor_points, gt_bboxes, target_gt_idx, fg_mask, stride_tensor, target_labels, extra_info_ch_size
-
-        inside_targets = self.generate_inside_targets(anchor_points=anchor_points,
-                                                      stride_tensor=stride_tensor,
-                                                      gt_bboxes=gt_bboxes,
-                                                      target_gt_idx=target_gt_idx,
-                                                      fg_mask=fg_mask,
-                                                      target_labels=target_labels,
-                                                      extra_info_ch_size=self.extra_info_ch_size)
-
-
-        # If there exists any anchors that has a boundary box, calculate the loss
-        # if fg_mask.sum() > 0:
-        loss[5] = self.bce_inside(pred_inside[fg_mask], inside_targets[fg_mask].to(dtype)).sum() / max(fg_mask.sum(), 1)
-
-        # breakpoint()
         # Bbox loss
-        if fg_mask.sum():
+        if fg_mask.sum(): # if any anchor has gt
             target_bboxes /= stride_tensor
             loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
                                               target_scores_sum, fg_mask)
@@ -660,29 +640,44 @@ class v8PoseSegLoss(v8PoseLoss):
                                                              stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
 
 
+            loss[5] = self.calculate_seg_loss_to_classify_anchors_inside_bboxes(
+                pred_inside=pred_inside,
+                anchor_points=anchor_points,
+                stride_tensor=stride_tensor,
+                gt_bboxes=gt_bboxes,
+                
+                target_gt_idx=target_gt_idx,
+                fg_mask=fg_mask,
+                target_labels=target_labels,
+
+                extra_info_ch_size=self.extra_info_ch_size
+            )
+
+
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
         loss[2] *= self.hyp.kobj  # kobj gain
         loss[3] *= self.hyp.cls  # cls gain
         loss[4] *= self.hyp.dfl  # dfl gain
-        loss[5] *= 1.0 
+        loss[5] *= 1.0  # seg gain
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
 
-    def generate_inside_targets(self, anchor_points, stride_tensor, gt_bboxes, target_gt_idx, fg_mask, target_labels, extra_info_ch_size):
+    def calculate_seg_loss_to_classify_anchors_inside_bboxes(self, pred_inside, anchor_points, stride_tensor, gt_bboxes, target_gt_idx, fg_mask, target_labels, extra_info_ch_size):
         """
-        Generate targets for inside/outside prediction.
-        
         Args:
-            anchor_points: anchor points coordinates
-            gt_bboxes: ground truth bounding boxes
-            target_gt_idx: indices of assigned ground truth boxes
-            fg_mask: foreground mask
-            stride_tensor: stride tensor for scaling
-            
+            pred_inside (bs, anchors_num, extra_info_ch_size): predicted classification result for anchor points
+            anchor_points(anchors_num, 2=coordinate (x,y))
+            stride_tensor (anchors_num, 1): stride for each anchor point (e.g. 32, 16, 8)
+            gt_bboxes (bs, 1, 4) -> (bs, each bs has 1 gt, xyxy)
+            target_gt_idx (bs, anchors_num): target_gt_idx[bs][anchor_idx] = gt_idx
+            fg_mask (bs, anchors_num): fg_mask[b_idx][anchor_idx] = True if anchor has gt else False
+            target_labels (bs, anchors_num): target_labels[b_idx][anchor_idx] = class_label
+            extra_info_ch_size (int): number of channels for extra information = is the size of nc
         Returns:
-            inside_targets: tensor with 1 for anchors inside the bounding box, 0 otherwise
+            loss (torch.Tensor): calculated loss
         """
+
         batch_size = gt_bboxes.shape[0]
         num_anchors = anchor_points.shape[0]
     
@@ -691,21 +686,17 @@ class v8PoseSegLoss(v8PoseLoss):
         
         for img_idx in range(batch_size):
             img_fg_mask = fg_mask[img_idx]
-            if not img_fg_mask.any(): # the anchor has no boundary box
+            anchor_idices = img_fg_mask.nonzero(as_tuple=False).squeeze(1)
+
+            if not img_fg_mask.any(): # none of the anchor in img_idx has no boundary box
                 continue
-                
-            # img_gt_idx = target_gt_idx[img_idx][img_fg_mask]
+
+            img_gt_idx = target_gt_idx[img_idx][img_fg_mask] # gt index for each anchor point that has gt
+            fg_anchor_points = scaled_anchor_points[img_fg_mask] # anchor points that have gt 
             
-            # Get the anchor points that are foreground
-            
-            fg_anchor_points = scaled_anchor_points[img_fg_mask]
-            
-            # For each foreground anchor point
+            # For each anchor with gt
             for i, (anchor_point, gt_idx) in enumerate(zip(fg_anchor_points, img_gt_idx)):
-                # Get corresponding gt box
                 gt_box = gt_bboxes[img_idx, gt_idx]
-                
-                # Check if anchor point is inside the gt box
                 is_inside = (
                     anchor_point[0] >= gt_box[0] and 
                     anchor_point[0] <= gt_box[2] and 
@@ -713,11 +704,11 @@ class v8PoseSegLoss(v8PoseLoss):
                     anchor_point[1] <= gt_box[3]
                 )
                 
-                # Set target value
-                idx = torch.where(img_fg_mask)[0][i]
-                # inside_targets[img_idx, idx] = 1.0 if is_inside else 0.0
-                
-        return inside_targets
+                anchor_idx = anchor_idices[i]
+                class_label = target_labels[img_idx][img_fg_mask][i]
+                inside_targets[img_idx][anchor_idx][class_label] = 1.0 if is_inside else 0.0
+        
+        return self.bce_inside(pred_inside, inside_targets)
 
 
 
