@@ -377,14 +377,14 @@ class Pose(Detect):
 
 
 class DetectWithExtraInfo(Detect):
-    def __init__(self, nc=80, ch=()):
+    def __init__(self, nc=80, ch=(), extra_info_ch_size=0):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__(nc, ch)
-        self.no = nc + self.reg_max * 4 + 1 # +1 to store an extra logit
-        
+        self.no = nc + self.reg_max * 4 + extra_info_ch_size
+
         # To store extra information:
         c4 = max(16, ch[0] // 4) 
-        self.cv_inside = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1, 1)) for x in ch)
+        self.cv_inside = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, extra_info_ch_size, 1)) for x in ch)
 
 
     def forward(self, x):
@@ -425,7 +425,7 @@ class PoseSeg(DetectWithExtraInfo):
 
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
         """Initialize YOLO network with default parameters and Convolutional Layers."""
-        super().__init__(nc, ch)
+        super().__init__(nc=nc, ch=ch, extra_info_ch_size=nc)
         self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
         self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
         c4 = max(ch[0] // 4, self.nk)
@@ -439,12 +439,16 @@ class PoseSeg(DetectWithExtraInfo):
         # x = [P3, P4, P5]
         # each P is (bs, c_i, h_i, w_i) # c_i  = ch[i]
         bs = x[0].shape[0]  # batch size
-        kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)  # (bs, 17*3, h*w)
-        # Per each image in the batch, it detecs where it's keypoints are located
-        # In our case is (bs, 3->(x, y, v), h*w)
-        # kpt = [bs, 17*3, h*w]
+        kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)
         x = self.detect(self, x)
-        
+
+        # (Pdb) x[0].shape
+        # torch.Size([2, 67, 4, 4])
+        # (Pdb) x[1].shape
+        # torch.Size([2, 67, 2, 2])
+        # (Pdb) x[2].shape
+        # torch.Size([2, 67, 1, 1])
+
         if self.training:
             return x, kpt
         pred_kpt = self.kpts_decode(bs, kpt)
