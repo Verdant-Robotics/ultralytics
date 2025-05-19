@@ -179,6 +179,10 @@ def non_max_suppression(
     if isinstance(prediction, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)
         prediction = prediction[0]  # select only inference output
 
+    # preds = (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+    # (Pdb) preds[0].shape
+    # torch.Size([4, 11, 84])
+
     device = prediction.device
     mps = 'mps' in device.type  # Apple MPS
     if mps:  # MPS not fully supported yet, convert tensors to CPU before NMS

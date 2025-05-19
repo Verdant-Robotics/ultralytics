@@ -564,18 +564,16 @@ class v8PoseSegLoss(v8PoseLoss):
         # B, grids, ..
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
-        pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()        
-        
+        pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
+
         pred_inside = pred_inside.permute(0, 2, 1).contiguous()  # permute to (bs, anchors, 1)
 
-
-        
-        # (Pdb) pred_scores.shape 
-        # torch.Size([2, 21, 2]) (bs, anchors, score for classes=weed/crop)
         # (Pdb) pred_distri.shape
         # torch.Size([2, 21, 64]) (bs, anchors, 4 * reg_max for dfl)
         # (Pdb) pred_inside.shape
         # torch.Size([2, 21, 2]) (bs, anchors, extra_info_ch_size)
+        # (Pdb) pred_scores.shape 
+        # torch.Size([2, 21, 2]) (bs, anchors, score for classes=weed/crop)
         
         dtype = pred_scores.dtype
         imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
@@ -606,6 +604,8 @@ class v8PoseSegLoss(v8PoseLoss):
 
         # (Pdb) pred_bboxes.shape
         # torch.Size([2, 21, 4])
+
+        # breakpoint()
 
         target_labels, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
             pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),

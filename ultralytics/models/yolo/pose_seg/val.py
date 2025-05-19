@@ -9,7 +9,8 @@ from ultralytics.models.yolo.detect import DetectionValidator
 from ultralytics.utils import LOGGER, ops
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.metrics import OKS_SIGMA, PoseMetrics, box_iou, kpt_iou
-from ultralytics.utils.plotting import output_to_target, plot_images
+from ultralytics.utils.plotting import output_to_target_for_pose, plot_images
+from ultralytics.utils.tal import make_anchors
 
 
 class PoseSegValidator(DetectionValidator):
@@ -49,7 +50,35 @@ class PoseSegValidator(DetectionValidator):
                                          'R', 'mAP50', 'mAP50-95)')
 
     def postprocess(self, preds):
-        """Apply non-maximum suppression and return detections with high confidence scores."""
+        """
+        Apply non-maximum suppression and return detections with high confidence scores +
+        Map anchor_points to segmentation classes
+        """
+        # preds = (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+        # (Pdb) preds[0].shape
+        # torch.Size([4, 11, 84])
+        # (Pdb) len(preds[1][0])
+        # 3
+        # (Pdb) preds[1][0][0].shape
+        # torch.Size([4, 68, 8, 8])
+        # (Pdb) preds[1][0][1].shape
+        # torch.Size([4, 68, 4, 4])
+        # (Pdb) preds[1][0][2].shape
+        # torch.Size([4, 68, 2, 2])
+    
+        # breakpoint()
+        if type(self.model.stride) is not torch.Tensor:
+            # self.model.stride = torch.tensor([self.model.stride])
+            self.model.stride = torch.tensor([6, 8, 32])
+
+        anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(preds[1][0], self.model.stride, 0.5))
+        strides = strides.unsqueeze(0).repeat(preds[0].shape[0], 1, 1) # 4, 1, 84
+        anchor_points = anchor_points.unsqueeze(0).repeat(preds[0].shape[0], 1, 1) # 4, 2, 84
+        seg_logits = preds[0][:, 6:8, :]  # (bs, 2, 84) = (bs, seg0, seg1, number_of_anchors)    
+        seg_conf, seg_class = seg_logits.max(dim=1, keepdim=True) # (4, 1, 84)
+        seg_result = torch.cat([anchor_points, strides, seg_class, seg_conf], dim=1) # 4, 5, 84
+        seg_result = seg_result.permute(0, 2, 1) # 4, 84, 5 = (bs, anchor_points, 5=(cx, cy, stride, seg_cls, seg_conf))
+
         return ops.non_max_suppression(preds,
                                        self.args.conf,
                                        self.args.iou,
@@ -57,7 +86,7 @@ class PoseSegValidator(DetectionValidator):
                                        multi_label=True,
                                        agnostic=self.args.single_cls,
                                        max_det=self.args.max_det,
-                                       nc=self.nc)
+                                       nc=self.nc), seg_result
 
     def init_metrics(self, model):
         """Initiate pose estimation metrics for YOLO model."""
@@ -69,6 +98,7 @@ class PoseSegValidator(DetectionValidator):
 
     def update_metrics(self, preds, batch):
         """Metrics."""
+        preds = preds[0]
         for si, pred in enumerate(preds):
             idx = batch['batch_idx'] == si
             cls = batch['cls'][idx].clamp(max=self.nc - 1)
@@ -163,14 +193,24 @@ class PoseSegValidator(DetectionValidator):
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predictions for YOLO model."""
-        pred_kpts = torch.cat([p[:, 6:].view(-1, *self.kpt_shape) for p in preds], 0)
-        plot_images(batch['img'],
-                    *output_to_target(preds, max_det=self.args.max_det),
+
+        seg_result = preds[1]
+        preds = preds[0]
+        pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in preds], 0)
+        batch_idx, classification_classes, bboxes, classification_confs = output_to_target_for_pose(preds, max_det=self.args.max_det)
+
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=classification_classes,
+                    bboxes=bboxes,
                     kpts=pred_kpts,
                     paths=batch['im_file'],
                     fname=self.save_dir / f'val_batch{ni}_pred.jpg',
                     names=self.names,
-                    on_plot=self.on_plot)  # pred
+                    on_plot=self.on_plot,
+                    seg_result=seg_result,
+                    )
+
 
     def pred_to_json(self, predn, filename):
         """Converts YOLO predictions to COCO JSON format."""

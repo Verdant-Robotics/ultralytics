@@ -324,7 +324,7 @@ class DetectTunableHead(nn.Module):
         for a, b, s in zip(m.cv2, m.cv3, m.stride):  # from
             a[-1].bias.data[:] = 1.0  # box
             b[-1].bias.data[:m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
-    
+
 
 class Segment(Detect):
     """YOLOv8 Segment head for segmentation models."""
@@ -372,8 +372,34 @@ class Pose(Detect):
         x = self.detect(self, x)
         if self.training:
             return x, kpt
+
+        # (Pdb) x[0].shape
+        # torch.Size([1, 6, 21])
+        # self.kpts_decode(bs, kpt)
+        # (Pdb) self.kpts_decode(bs, kpt).shape
+        # torch.Size([1, 3, 21])
+        # 6 + 3 = 9
+
         pred_kpt = self.kpts_decode(bs, kpt)
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+
+    def kpts_decode(self, bs, kpts):
+        """Decodes keypoints."""
+        ndim = self.kpt_shape[1]
+        if self.export:  # required for TFLite export to avoid 'PLACEHOLDER_FOR_GREATER_OP_CODES' bug
+            y = kpts.view(bs, *self.kpt_shape, -1)
+            a = (y[:, :, :2] * 2.0 + (self.anchors - 0.5)) * self.strides
+            if ndim == 3:
+                a = torch.cat((a, y[:, :, 2:3].sigmoid()), 2)
+            return a.view(bs, self.nk, -1)
+        else:
+            y = kpts.clone()
+            if ndim == 3:
+                y[:, 2::3].sigmoid_()  # inplace sigmoid
+            y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
+            y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
+            return y
+
 
 
 class DetectWithExtraInfo(Detect):
@@ -381,6 +407,7 @@ class DetectWithExtraInfo(Detect):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__(nc, ch)
         self.no = nc + self.reg_max * 4 + extra_info_ch_size
+        self.extra_info_ch_size = extra_info_ch_size
 
         # To store extra information:
         c4 = max(16, ch[0] // 4) 
@@ -402,9 +429,12 @@ class DetectWithExtraInfo(Detect):
         x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
         if self.export and self.format in ('saved_model', 'pb', 'tflite', 'edgetpu', 'tfjs'):  # avoid TF FlexSplitV ops
             box = x_cat[:, :self.reg_max * 4]
-            cls = x_cat[:, self.reg_max * 4:]
+            cls = x_cat[:, self.reg_max * 4:self.reg_max * 4 + self.nc]
+            seg = x_cat[:, self.reg_max * 4 + self.nc:]
         else:
-            box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
+            box, rest = x_cat.split((self.reg_max * 4, self.nc + self.extra_info_ch_size), 1)
+            cls, seg = rest.split((self.nc, self.extra_info_ch_size), 1)
+
         dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
 
         if self.export and self.format in ('tflite', 'edgetpu'):
@@ -416,7 +446,14 @@ class DetectWithExtraInfo(Detect):
             img_size = torch.tensor([img_w, img_h, img_w, img_h], device=dbox.device).reshape(1, 4, 1)
             dbox /= img_size
 
-        y = torch.cat((dbox, cls.sigmoid()), 1)
+        # (Pdb) cls.shape
+        # torch.Size([4, 2, 84])
+        # (Pdb) seg.shape
+        # torch.Size([4, 2, 84])
+        # (Pdb) dbox.shape
+        # torch.Size([4, 4, 84])
+
+        y = torch.cat((dbox, cls.sigmoid(), seg.sigmoid()), 1)
         return y if self.export else (y, x)
 
 
@@ -442,18 +479,32 @@ class PoseSeg(DetectWithExtraInfo):
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)
         x = self.detect(self, x)
 
+        # during training
         # (Pdb) x[0].shape
-        # torch.Size([2, 67, 4, 4])
+        # torch.Size([2, 68, 4, 4])
         # (Pdb) x[1].shape
-        # torch.Size([2, 67, 2, 2])
+        # torch.Size([2, 68, 2, 2])
         # (Pdb) x[2].shape
-        # torch.Size([2, 67, 1, 1])
+        # torch.Size([2, 68, 1, 1])
+
+        # right after training
+        # (Pdb) x[0].shape
+        # torch.Size([4, 8, 84])
+        # len(x[1]) = 3
+        # (Pdb) x[1][0].shape
+        # torch.Size([4, 68, 8, 8])
+        # (Pdb) x[1][1].shape
+        # torch.Size([4, 68, 4, 4])
+        # (Pdb) x[1][2].shape
+        # torch.Size([4, 68, 2, 2])
 
         if self.training:
             return x, kpt
+
         pred_kpt = self.kpts_decode(bs, kpt)
+
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
-    
+
 
     def kpts_decode(self, bs, kpts):
         """Decodes keypoints."""
