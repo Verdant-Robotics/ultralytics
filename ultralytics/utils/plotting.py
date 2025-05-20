@@ -364,7 +364,7 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
 
 
 
-@threaded
+# @threaded
 def plot_images(images,
                 batch_idx,
                 cls,
@@ -376,6 +376,7 @@ def plot_images(images,
                 names=None,
                 on_plot=None,
                 seg_result=None,
+                classification_confs=None,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -390,6 +391,8 @@ def plot_images(images,
         kpts = kpts.cpu().numpy()
     if isinstance(batch_idx, torch.Tensor):
         batch_idx = batch_idx.cpu().numpy()
+
+    print("entering plot_images...: ", fname)
 
     max_size = 1920  # max image size
     max_subplots = 16  # max image subplots, i.e. 4x4
@@ -444,7 +447,8 @@ def plot_images(images,
                     c = classes[j]
                     color = colors(c)
                     c = names.get(c, c) if names else c
-                    if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    # if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    if classification_confs is None or (classification_confs is not None and classification_confs[idx][j] > 0.9):  # 0.25 conf thresh
                         label = f'{c}' if labels else f'{c} {conf[j]:.1f}'
                         annotator.box_label(box, label, color=color)
             elif len(classes):
@@ -465,8 +469,32 @@ def plot_images(images,
                 kpts_[..., 0] += x
                 kpts_[..., 1] += y
                 for j in range(len(kpts_)):
-                    if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    # if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    if classification_confs is None or (classification_confs is not None and classification_confs[idx][j] > 0.9):  # 0.25 conf thresh
                         annotator.kpts(kpts_[j])
+
+            # 4, 84, 5 = (bs, num_anchor_points, 5=(cx, cy, stride, seg_cls, seg_conf))
+            if seg_result is not None:
+                # breakpoint()
+                image_segmentation = seg_result[i]
+                seg_conf = image_segmentation[:, 4]
+                seg_threshold = 0.5
+                seg_center_xy = image_segmentation[:, :2] *  image_segmentation[:, 2].unsqueeze(1).repeat(1, 2)
+                seg_center_xy = seg_center_xy[seg_conf > seg_threshold]
+                seg_class = image_segmentation[:, 3][seg_conf > seg_threshold].unsqueeze(1)
+
+                x_offset = int(w * (i // ns))
+                y_offset = int(h * (i % ns))
+                for cx, cy, seg_class in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class):
+                    c_idd = int(seg_class.item())
+                    color = colors(c_idd)
+                    annotator.text(
+                        (cx.item() + x_offset, cy.item() + y_offset),
+                        f'{seg_class.item():.0f}',
+                        txt_color=color,
+                        box_style=False
+                    )
+
 
             # Plot masks
             if len(masks):
@@ -481,7 +509,8 @@ def plot_images(images,
 
                 im = np.asarray(annotator.im).copy()
                 for j, box in enumerate(boxes.T.tolist()):
-                    if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    # if labels or conf[j] > 0.25:  # 0.25 conf thresh
+                    if classification_confs is None or (classification_confs is not None and classification_confs[idx][j] > 0.9):  # 0.25 conf thresh
                         color = colors(classes[j])
                         mh, mw = image_masks[j].shape
                         if mh != h or mw != w:
@@ -652,6 +681,7 @@ def output_to_target(output, max_det=300):
     targets = []
     for i, o in enumerate(output):
         box, conf, cls = o[:max_det, :6].cpu().split((4, 1, 1), 1)
+
         j = torch.full((conf.shape[0], 1), i)
         targets.append(torch.cat((j, cls, ops.xyxy2xywh(box), conf), 1))
     targets = torch.cat(targets, 0).numpy()

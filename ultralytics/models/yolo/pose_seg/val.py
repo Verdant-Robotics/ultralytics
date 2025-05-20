@@ -77,7 +77,7 @@ class PoseSegValidator(DetectionValidator):
         seg_logits = preds[0][:, 6:8, :]  # (bs, 2, 84) = (bs, seg0, seg1, number_of_anchors)    
         seg_conf, seg_class = seg_logits.max(dim=1, keepdim=True) # (4, 1, 84)
         seg_result = torch.cat([anchor_points, strides, seg_class, seg_conf], dim=1) # 4, 5, 84
-        seg_result = seg_result.permute(0, 2, 1) # 4, 84, 5 = (bs, anchor_points, 5=(cx, cy, stride, seg_cls, seg_conf))
+        seg_result = seg_result.permute(0, 2, 1) # 4, 84, 5 = (bs, num_anchor_points, 5=(cx, cy, stride, seg_cls, seg_conf))
 
         return ops.non_max_suppression(preds,
                                        self.args.conf,
@@ -191,6 +191,7 @@ class PoseSegValidator(DetectionValidator):
                     names=self.names,
                     on_plot=self.on_plot)
 
+
     def plot_predictions(self, batch, preds, ni):
         """Plots predictions for YOLO model."""
 
@@ -208,6 +209,7 @@ class PoseSegValidator(DetectionValidator):
                     fname=self.save_dir / f'val_batch{ni}_pred.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
+                    classification_confs=classification_confs,
                     seg_result=seg_result,
                     )
 
