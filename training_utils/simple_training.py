@@ -34,6 +34,7 @@ if __name__ == "__main__":
     else:
         model = YOLO(GetModelYaml(training_task))  # Initialize model
 
+    # args.disable_wandb = True
     if args.disable_wandb:
         os.environ['WANDB_MODE'] = 'disabled'
 
@@ -43,7 +44,7 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=1,
+        epochs=200,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
