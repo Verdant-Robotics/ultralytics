@@ -706,6 +706,7 @@ class v8PoseSegLoss(v8PoseLoss):
                 
                 anchor_idx = anchor_idices[i]
                 class_label = target_labels[img_idx][img_fg_mask][i]
+                
                 inside_targets[img_idx][anchor_idx][class_label] = 1.0 if is_inside else 0.0
         
         return self.bce_inside(pred_inside, inside_targets)

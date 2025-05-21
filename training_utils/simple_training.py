@@ -44,16 +44,16 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=200,
+        epochs=300,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
         mosaic=0.0,  # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
         imgsz=768,
         seed=1,
-        batch=4,
+        batch=128,
         name=experiment_name,
-        device=[0],
+        device=[0, 1, 2, 3, 4, 5, 6, 7],
         patience=50,
     )
 

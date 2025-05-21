@@ -174,21 +174,24 @@ def non_max_suppression(
     """
 
     # Checks
+
+    # prediction = (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
+    # (Pdb) prediction[0].shape
+    # torch.Size([4, 9, 84])  # 4=bs, 9 = (x, y, w, h, class1, class2, kpt_x, kpt_y, kpt_conf), 84 = num anchors
+    
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
     assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
     if isinstance(prediction, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)
         prediction = prediction[0]  # select only inference output
 
-    # preds = (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
-    # (Pdb) preds[0].shape
-    # torch.Size([4, 11, 84])
-
+    if nc == 0:  # if no class specified, set to number of classes in model
+        nc = 2
     device = prediction.device
     mps = 'mps' in device.type  # Apple MPS
     if mps:  # MPS not fully supported yet, convert tensors to CPU before NMS
         prediction = prediction.cpu()
     bs = prediction.shape[0]  # batch size
-    nc = nc or (prediction.shape[1] - 4)  # number of classes
+    nc = nc  # number of classes
     nm = prediction.shape[1] - nc - 4
     mi = 4 + nc  # mask start index
     xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates
