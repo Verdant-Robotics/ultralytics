@@ -24,7 +24,6 @@ if __name__ == "__main__":
 
     PrepareDataset(coco_classes_file, dataset_yaml_path, training_task)
 
-
     if args.load is not None:
         if os.path.exists(args.load):
             model = YOLO(args.load)
@@ -44,16 +43,16 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=300,
+        epochs=300, # 300 or 1
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
-        mosaic=0.0,  # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
+        mosaic=0.0,
         imgsz=768,
         seed=1,
-        batch=128,
+        batch=128,  # 128
         name=experiment_name,
-        device=[0, 1, 2, 3, 4, 5, 6, 7],
+        device=[0, 1, 2, 3, 4, 5, 6, 7], # [0, 1, 2, 3, 4, 5, 6, 7] for multi-gpu training
         patience=50,
     )
 

@@ -51,7 +51,7 @@ class PoseSegValidator(DetectionValidator):
 
 
     def process_seg_result(self, preds):
-        seg_confidence = 0.8
+        seg_confidence = 0.3
         if type(self.model.stride) is not torch.Tensor:
             # self.model.stride = torch.tensor([self.model.stride]) # Does not 
             self.model.stride = torch.tensor([6, 8, 32])
