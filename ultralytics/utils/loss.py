@@ -71,6 +71,7 @@ class BboxLoss(nn.Module):
 
     def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask):
         """IoU loss."""
+        # breakpoint()
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
@@ -682,18 +683,17 @@ class v8PoseSegLoss(v8PoseLoss):
         inside_targets = torch.zeros((batch_size, num_anchors, extra_info_ch_size), device=self.device)
         scaled_anchor_points = anchor_points * stride_tensor
 
-        x1 = gt_bboxes[:, :, 0].unsqueeze(2)  # (bs, num_gt, 1)
+        x1 = gt_bboxes[:, :, 0].unsqueeze(2)  # (B, T, 1)
         y1 = gt_bboxes[:, :, 1].unsqueeze(2)
         x2 = gt_bboxes[:, :, 2].unsqueeze(2)
         y2 = gt_bboxes[:, :, 3].unsqueeze(2)
 
-
-        ax = scaled_anchor_points[:, 0].view(1, 1, -1) # (1, 1, num_anchors)
+        ax = scaled_anchor_points[:, 0].view(1, 1, -1) # (1, 1, A)
         ay = scaled_anchor_points[:, 1].view(1, 1, -1)
 
-        inside_x = (ax >= x1) & (ax <= x2) 
-        inside_y = (ay >= y1) & (ay <= y2)
-        is_inside = inside_x & inside_y  # (bs, num_gt, num_anchors)
+        inside_x = (ax >= x1) & (ax <= x2)  # (B, T, A)
+        inside_y = (ay >= y1) & (ay <= y2) # (B, T, A)
+        is_inside = inside_x & inside_y  # (bs, num_gt, num_anchors) (B, T, A) does any of the anchors fall into the gt bboxes
 
         # gt_labels = (bs, num_gt, 1) 
 
@@ -703,8 +703,14 @@ class v8PoseSegLoss(v8PoseLoss):
         gt_labels_onehot = gt_labels_onehot.unsqueeze(2).float()  # (B, T, 1, C)
         is_inside = is_inside.unsqueeze(-1).float()                # (B, T, A, 1)
 
-        # Multiply: (B, T, A, 1) * (B, T, 1, C) → (B, T, A, C)
-        inside_contrib = is_inside * gt_labels_onehot  # (B, T, A, C)
+        area = ((x2 - x1) * (y2 - y1)).clamp(min=1.0)  # (B, T, 1)
+        # breakpoint()
+        # area_norm = area / area.max()
+        size_weights = 1.0 / area # (B, T, 1)
+        size_weights = size_weights.unsqueeze(-1) # (B, T, 1, 1)
+
+        # Multiply: (B, T, A, 1) * (B, T, 1, C) *  (B, T, 1, 1) → (B, T, A, C)
+        inside_contrib = is_inside * gt_labels_onehot  * size_weights # (B, T, A, C)
 
         # Sum over GTs (T) → (B, A, C)
         inside_targets = inside_contrib.sum(dim=1)  # aggregate multiple GT boxes

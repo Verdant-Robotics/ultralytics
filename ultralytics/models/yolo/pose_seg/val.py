@@ -51,17 +51,28 @@ class PoseSegValidator(DetectionValidator):
 
 
     def process_seg_result(self, preds):
-        seg_confidence = 0.3
+        # seg_confidence = 0.2
+        crop_confidence = 0.9
+        weed_confidence = 0.2
+
         if type(self.model.stride) is not torch.Tensor:
             # self.model.stride = torch.tensor([self.model.stride]) # Does not 
-            self.model.stride = torch.tensor([6, 8, 32])
+            self.model.stride = torch.tensor([8, 8, 8]) # WHY?
 
         anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(preds[1][0], self.model.stride, 0.5))
-
         strides = strides.unsqueeze(0).repeat(preds[0].shape[0], 1, 1) # (bs=4, stride=1, anchors_len=84)
         anchor_points = anchor_points.unsqueeze(0).repeat(preds[0].shape[0], 1, 1) # (bs=4, (cx, cy)=2, anchors_len=84) 
+
         seg_logits = preds[0][:, 6:8, :]  # (bs, 2, 84) = (bs, (seg0, seg1), anchors_len)
-        seg_mask = seg_logits.amax(dim=1) > seg_confidence # (bs, anchor_points)
+        seg0 = seg_logits[:, 0, :]
+        seg1 = seg_logits[:, 1, :]
+
+        is_crop = seg0 > seg1
+        is_weed = seg1 > seg0
+
+        seg_mask = (is_crop & (seg0 > crop_confidence)) | (is_weed & (seg1 > weed_confidence))  # (bs, anchors_len)
+
+        # seg_mask = seg_logits.amax(dim=1) > seg_confidence # (bs, anchor_points)
 
         seg_results = []
 
@@ -80,7 +91,11 @@ class PoseSegValidator(DetectionValidator):
             combined = combined.transpose(0, 1)  # (filtered_anchors, 5)
             seg_results.append(combined)
 
-        return seg_results
+        
+        anchor_points = anchor_points.permute(0, 2, 1)
+        strides = strides.permute(0, 2, 1)
+
+        return seg_results, anchor_points, strides
 
 
     def postprocess(self, preds):
@@ -218,7 +233,7 @@ class PoseSegValidator(DetectionValidator):
     def plot_predictions(self, batch, preds, ni):
         """Plots predictions for YOLO model."""
 
-        seg_results = preds[1]
+        seg_results, anchor_points, strides = preds[1]
         preds = preds[0]
         pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in preds], 0)
 
@@ -230,6 +245,8 @@ class PoseSegValidator(DetectionValidator):
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
+                    anchor_points=anchor_points,
+                    strides=strides,
                     )
 
 
