@@ -506,6 +506,7 @@ def plot_images(images,
                     annotator.box_label(box, color=color)
 
                 # To plot all anchors:
+                # if i in [1, 7]:
                 #      for anchor_idx, (anchor_point, stride_val) in enumerate(zip(anchor_points[i], strides[i])):
                 #         # stride_val = strides[i][]
                 #         # stride_val = torch.Tensor([32])

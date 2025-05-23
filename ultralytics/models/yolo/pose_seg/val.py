@@ -90,7 +90,6 @@ class PoseSegValidator(DetectionValidator):
             ], dim=0)
             combined = combined.transpose(0, 1)  # (filtered_anchors, 5)
             seg_results.append(combined)
-
         
         anchor_points = anchor_points.permute(0, 2, 1)
         strides = strides.permute(0, 2, 1)

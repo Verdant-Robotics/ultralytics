@@ -22,7 +22,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     PrepareDataset(coco_classes_file, dataset_yaml_path, training_task)
 
-    args.load = 'runs/neptune/pose-segmentation/train27/weights/best.pt'
+    # args.load = 'runs/neptune/pose-segmentation/train27/weights/best.pt'
+
+    args.load = 'runs/pose-segmentation/train12/weights/best.pt'
     
     model = YOLO(args.load)
 
