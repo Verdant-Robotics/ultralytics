@@ -51,42 +51,40 @@ class PoseSegValidator(DetectionValidator):
 
 
     def process_seg_result(self, preds):
-        # seg_confidence = 0.2
-        crop_confidence = 0.9
-        weed_confidence = 0.2
+        """
+        preds = x_flat, ([P1, P2, P3], kpt)
+        x_flat = (bs, 8=xyxy(bbox),cls0,cls1,seg0,seg1, anchors_len) e.g anchors_len = 8x8 + 4x4 + 2x2 = 84
+        Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resoulution(self.stride) [8, 16, 32]
+        """
 
-        if type(self.model.stride) is not torch.Tensor:
-            # self.model.stride = torch.tensor([self.model.stride]) # Does not 
-            self.model.stride = torch.tensor([8, 8, 8]) # WHY?
+        Pi_list = preds[1][0]  # [P1, P2, P3]
+        anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, torch.Tensor([8, 16, 32]), 0.5))
+        
+        bs = Pi_list[0].shape[0]
+        strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1(stride), A)
+        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2(cx, cy), A) 
 
-        anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(preds[1][0], self.model.stride, 0.5))
-        strides = strides.unsqueeze(0).repeat(preds[0].shape[0], 1, 1) # (bs=4, stride=1, anchors_len=84)
-        anchor_points = anchor_points.unsqueeze(0).repeat(preds[0].shape[0], 1, 1) # (bs=4, (cx, cy)=2, anchors_len=84) 
-
-        seg_logits = preds[0][:, 6:8, :]  # (bs, 2, 84) = (bs, (seg0, seg1), anchors_len)
+        x_flat = preds[0]
+        seg_logits = x_flat[:, 6:8, :]
         seg0 = seg_logits[:, 0, :]
         seg1 = seg_logits[:, 1, :]
 
-        is_crop = seg0 > seg1
-        is_weed = seg1 > seg0
-
-        seg_mask = (is_crop & (seg0 > crop_confidence)) | (is_weed & (seg1 > weed_confidence))  # (bs, anchors_len)
-
-        # seg_mask = seg_logits.amax(dim=1) > seg_confidence # (bs, anchor_points)
+        is_c = seg0 > seg1
+        is_w = seg1 > seg0
+        seg_mask = (is_c & (seg0 > self.args.seg_conf_c)) | (is_w & (seg1 > self.args.seg_conf_w))  # (B, A)
 
         seg_results = []
-
         for b in range(seg_logits.shape[0]):
             selected_anchor_points = anchor_points[b, :, seg_mask[b]]  # (2=(cx, cy), filtered_anchors) 
-            selected_strides = strides[b, :, seg_mask[b]] # (1=stride, filtered_anchors)
-            selected_seg = seg_logits[b, :, seg_mask[b]]  # (2=(seg0, seg1), filtered_anchors)
-            seg_class = selected_seg.argmax(dim=0, keepdim=True)  # (filtered_anchors)
-            seg_conf = selected_seg.max(dim=0, keepdim=True).values  # (filtered_anchors)
+            selected_strides = strides[b, :, seg_mask[b]]              # (1=stride, filtered_anchors)
+            selected_seg = seg_logits[b, :, seg_mask[b]]               # (2=(seg0, seg1), filtered_anchors)
+            seg_class = selected_seg.argmax(dim=0, keepdim=True)       # (filtered_anchors)
+            seg_conf = selected_seg.max(dim=0, keepdim=True).values    # (filtered_anchors)
             combined = torch.cat([
-                selected_anchor_points,            # (2, filtered_anchors)
-                selected_strides,                  # (stride_dim, filtered_anchors)
-                seg_class,                        # (1, filtered_anchors)
-                seg_conf,                       # (1, filtered_anchors)
+                selected_anchor_points,
+                selected_strides,
+                seg_class,
+                seg_conf,
             ], dim=0)
             combined = combined.transpose(0, 1)  # (filtered_anchors, 5)
             seg_results.append(combined)
@@ -94,28 +92,13 @@ class PoseSegValidator(DetectionValidator):
         anchor_points = anchor_points.permute(0, 2, 1)
         strides = strides.permute(0, 2, 1)
 
-        return seg_results, anchor_points, strides
+        return seg_results
 
 
     def postprocess(self, preds):
         """
-        Apply non-maximum suppression and return detections with high confidence scores +
-        Map anchor_points to segmentation classes
+        Apply non-maximum suppression and return detections with high confidence scores + Map anchor_points to seg classes
         """
-        # preds = (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
-        # (Pdb) preds[0].shape
-        # torch.Size([4, 11, 84])
-        # (Pdb) len(preds[1][0])
-        # 3
-        # (Pdb) preds[1][0][0].shape
-        # torch.Size([4, 68, 8, 8])
-        # (Pdb) preds[1][0][1].shape
-        # torch.Size([4, 68, 4, 4])
-        # (Pdb) preds[1][0][2].shape
-        # torch.Size([4, 68, 2, 2])
-
-        seg_result = self.process_seg_result(preds)
-
         return ops.non_max_suppression(preds,
                                        self.args.conf,
                                        self.args.iou,
@@ -123,7 +106,7 @@ class PoseSegValidator(DetectionValidator):
                                        multi_label=True,
                                        agnostic=self.args.single_cls,
                                        max_det=self.args.max_det,
-                                       nc=self.nc), seg_result
+                                       nc=self.nc), self.process_seg_result(preds)
 
     def init_metrics(self, model):
         """Initiate pose estimation metrics for YOLO model."""
@@ -232,21 +215,37 @@ class PoseSegValidator(DetectionValidator):
     def plot_predictions(self, batch, preds, ni):
         """Plots predictions for YOLO model."""
 
-        seg_results, anchor_points, strides = preds[1]
+        seg_results = preds[1]
+
         preds = preds[0]
         pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in preds], 0)
 
-        plot_images(batch['img'],
-                    *output_to_target(preds, max_det=self.args.max_det),
+        batch_idx, cls, bboxes = output_to_target(preds, max_det=self.args.max_det)
+        
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    # bboxes=bboxes,
+                    # kpts=pred_kpts,
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'val_batch{ni}_seg_pred.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    seg_results=seg_results,
+                    )
+        
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    bboxes=bboxes,
                     kpts=pred_kpts,
                     paths=batch['im_file'],
                     fname=self.save_dir / f'val_batch{ni}_pred.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
-                    seg_results=seg_results,
-                    anchor_points=anchor_points,
-                    strides=strides,
+                    # seg_results=seg_results,
                     )
+
 
 
     def pred_to_json(self, predn, filename):

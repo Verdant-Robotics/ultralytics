@@ -33,7 +33,6 @@ if __name__ == "__main__":
     else:
         model = YOLO(GetModelYaml(training_task))  # Initialize model
 
-    # args.disable_wandb = True
     if args.disable_wandb:
         os.environ['WANDB_MODE'] = 'disabled'
 

@@ -71,7 +71,6 @@ class BboxLoss(nn.Module):
 
     def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask):
         """IoU loss."""
-        # breakpoint()
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
@@ -529,59 +528,28 @@ class v8PoseLoss(v8DetectionLoss):
 
 
 class v8PoseSegLoss(v8PoseLoss):
-    """Criterion class for computing training losses."""
-    def __init__(self, model):  # model must be de-paralleled
-        """Initializes v8PoseLoss with model, sets keypoint variables and declares a keypoint loss instance."""
+    def __init__(self, model):
         super().__init__(model)
         self.bce_inside = nn.BCEWithLogitsLoss(reduction='none')
-        self.extra_info_ch_size = self.nc # TODO
-
+        self.seg_ch_num = model.model[-1].seg_ch_num
 
     def __call__(self, preds, batch):
-        """Calculate the total loss and detach it."""
-        loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, inside/outside
-
-        # 68 = 64 + 2(nc) + 2(extra_info_ch_size)
-        # extra_info_ch_size = 
-        # feats = x from heads.py 
-        # (Pdb) feats[0].shape 
-        # torch.Size([2, 68, 4, 4]) (bs, ch, h, w)
-        # (Pdb) feats[1].shape
-        # torch.Size([2, 68, 2, 2])
-        # (Pdb) feats[2].shape
-        # torch.Size([2, 68, 1, 1]) 
-
+        loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
-
-        # 4 x 4 + 2 x 2 + 1 x 1 = 21 anchors
-        # all_preds.shape torch.Size([2, 68, 21])
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
 
-
-        pred_distri, rest = all_preds.split((self.reg_max * 4, self.nc + self.extra_info_ch_size), 1)
-        pred_scores, pred_inside = rest.split((self.nc, self.extra_info_ch_size), 1)
-
+        pred_distri, rest = all_preds.split((self.reg_max * 4, self.nc + self.seg_ch_num), 1)
+        pred_scores, pred_seg = rest.split((self.nc, self.seg_ch_num), 1)
 
         # B, grids, ..
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
         pred_kpts = pred_kpts.permute(0, 2, 1).contiguous()
-        pred_inside = pred_inside.permute(0, 2, 1).contiguous()  # permute to (bs, anchors, extra_info_ch_size)
-
-        # (Pdb) pred_distri.shape
-        # torch.Size([2, 21, 64]) (bs, anchors, 4 * reg_max for dfl)
-        # (Pdb) pred_inside.shape
-        # torch.Size([2, 21, 2]) (bs, anchors, extra_info_ch_size)
-        # (Pdb) pred_scores.shape 
-        # torch.Size([2, 21, 2]) (bs, anchors, score for classes=weed/crop)
+        pred_seg = pred_seg.permute(0, 2, 1).contiguous()  # permute to (bs, anchors, seg_ch_num)
         
         dtype = pred_scores.dtype
         imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
         anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
-
-        # anchor_points torch.Size([21, 2]) # number of anchors, coordinate (x,y)
-        # stride_tensor (21, 1) # number of anchors, resoulution e.g. 32 or 16 or 8 
-
 
         # Targets
         batch_size = pred_scores.shape[0]
@@ -591,41 +559,20 @@ class v8PoseSegLoss(v8PoseLoss):
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
 
-        # (Pdb) gt_bboxes.shape
-        # torch.Size([2, 1, 4]) (bs, each bs has 1 gt, xyxy)
-        # (Pdb) gt_labels.shape
-        # torch.Size([2, 1, 1]) (bs, each bs has 1 gt, class_label)
-        # (Pdb) mask_gt.shape
-        # torch.Size([2, 1, 1]) (bs, each bs has 1 gt, mask indicating if bbox exist)
-
         # Pboxes
-        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
-        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # (B, h x w, 4(xyxy))
+        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))
 
-        # (Pdb) pred_bboxes.shape
-        # torch.Size([2, 21, 4])
-
-        target_labels, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
             pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
 
         target_scores_sum = max(target_scores.sum(), 1)
 
-        # (Pdb) target_labels.shape = (2, 21)
-        # (Pdb) target_bboxes.shape
-        # torch.Size([2, 21, 4])
-        # (Pdb) target_scores.shape
-        # torch.Size([2, 21, 2])
-        # (Pdb) fg_mask.shape
-        # torch.Size([2, 21]) -> (bs, anchors that are gt 1 else 0)
-        # (Pdb) target_gt_idx.shape -> which gt is assigned to which anchor
-        # torch.Size([2, 21])
-
         # Cls loss
         loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
-
-        # Bbox loss
+        # Bbox, kpt, and, seg loss
         if fg_mask.sum(): # if any anchor has gt
             target_bboxes /= stride_tensor
             loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
@@ -637,27 +584,14 @@ class v8PoseSegLoss(v8PoseLoss):
             loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
                                                              stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
 
-            # loss[5] = self.calculate_seg_loss(
-            #     pred_inside=pred_inside,
-            #     anchor_points=anchor_points,
-            #     strides=stride_tensor,
-            #     target_bboxes=target_bboxes,
-            #     target_labels=target_labels,
-            #     target_gt_idx=target_gt_idx,
-            #     fg_mask=fg_mask,
-            #     extra_info_ch_size=self.extra_info_ch_size
-            # )
-
-            loss[5] = self.calculate_seg_loss_to_classify_anchors_inside_bboxes(
-                pred_inside=pred_inside,
+            loss[5] = self.calculate_seg_loss(
+                pred_seg=pred_seg,
                 anchor_points=anchor_points,
                 stride_tensor=stride_tensor,
                 gt_bboxes=gt_bboxes,
                 gt_labels=gt_labels,
                 target_gt_idx=target_gt_idx,
                 fg_mask=fg_mask,
-                # target_labels=target_labels,
-                extra_info_ch_size=self.extra_info_ch_size
             )
 
 
@@ -666,55 +600,21 @@ class v8PoseSegLoss(v8PoseLoss):
         loss[2] *= self.hyp.kobj  # kobj gain
         loss[3] *= self.hyp.cls  # cls gain
         loss[4] *= self.hyp.dfl  # dfl gain
-        loss[5] *= 1.0  # seg gain
+        loss[5] *= self.hyp.seg  # seg gain
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
 
-    # def calculate_seg_loss(self, pred_inside, anchor_points, strides, target_bboxes, target_labels, target_gt_idx, fg_mask, extra_info_ch_size):
-    #     '''
-    #         pred_inside (B, A, C)
-    #         anchor_points (A, 2=coordinate (x,y))
-    #         strides (A, 1)
-    #         target_bboxes (B, A, 4) -> (B, A, xyxy)
-    #         target_labels (B, A) -> class_label
-
-    #         target_gt_idx (B, A): target_gt_idx[bs][anchor_idx] = gt_idx
-    #         fg_mask (B, A): fg_mask[b_idx][anchor_idx] = True if anchor has gt else False
-    #     '''
-    #     batch_size = target_bboxes.shape[0]
-    #     num_anchors = anchor_points.shape[0]
-
-    #     scaled_anchor_points = anchor_points * strides # (A, 2) * (A, 1) = (A, 2)
-    #     x1 = target_bboxes[:, :, 0].unsqueeze(2)  # (B, A, 1)
-    #     y1 = target_bboxes[:, :, 1].unsqueeze(2)
-    #     x2 = target_bboxes[:, :, 2].unsqueeze(2)
-    #     y2 = target_bboxes[:, :, 3].unsqueeze(2)
-
-    #     ax = scaled_anchor_points[:, 0].unsqueeze(-1) # (A, 1)
-    #     ay = scaled_anchor_points[:, 1].unsqueeze(-1) # (A, 1)
-
-    #     # breakpoint()
-
-    #     inside_x = (ax >= x1) & (ax <= x2)  # (B, A, 1)
-    #     inside_y = (ay >= y1) & (ay <= y2) # (B, A, 1)
-    #     is_inside = inside_x & inside_y  # (B, A, 1)
-
-    #     one_hot_target_labels = torch.nn.functional.one_hot(target_labels.squeeze(-1).long(), num_classes=extra_info_ch_size).float()  # (B, A, C)
-
-
-
-
-    def calculate_seg_loss_to_classify_anchors_inside_bboxes(self, pred_inside, anchor_points, stride_tensor, gt_bboxes, target_gt_idx, gt_labels, fg_mask, extra_info_ch_size, ):
+    def calculate_seg_loss(self, pred_seg, anchor_points, stride_tensor, gt_bboxes, gt_labels, target_gt_idx, fg_mask):
         """
         Args:
-            pred_inside (bs, anchors_num, extra_info_ch_size): predicted classification result for anchor points
-            anchor_points(anchors_num, 2=coordinate (x,y))
-            stride_tensor (anchors_num, 1): stride for each anchor point (e.g. 32, 16, 8)
-            gt_bboxes (bs, 1, 4) -> (bs, each bs has 1 gt, xyxy)
-            target_gt_idx (bs, anchors_num): target_gt_idx[bs][anchor_idx] = gt_idx
+            pred_seg (B, A, seg_ch_num): predicted seg result for anchor points
+            anchor_points(A, 2=(x,y))
+            stride_tensor (A, 1)
+            gt_bboxes (B, T, 4) -> (bs, each bs has 1 gt, xyxy)
+            gt_labels (B, T, 1): gt_labels[b_idx][gt_idx] = class_label
+            target_gt_idx (B, anchors_num): target_gt_idx[bs][anchor_idx] = gt_idx
             fg_mask (bs, anchors_num): fg_mask[b_idx][anchor_idx] = True if anchor has gt else False
-            target_labels (bs, anchors_num): target_labels[b_idx][anchor_idx] = class_label
-            extra_info_ch_size (int): number of channels for extra information = is the size of nc
+            seg_ch_num (int): number of channels needed to perform segmentation
         Returns:
             loss (torch.Tensor): calculated loss
         """
@@ -722,7 +622,7 @@ class v8PoseSegLoss(v8PoseLoss):
         batch_size = gt_bboxes.shape[0]
         num_anchors = anchor_points.shape[0]
 
-        inside_targets = torch.zeros((batch_size, num_anchors, extra_info_ch_size), device=self.device)
+        inside_targets = torch.zeros((batch_size, num_anchors, self.seg_ch_num), device=self.device)
         scaled_anchor_points = anchor_points * stride_tensor
 
         x1 = gt_bboxes[:, :, 0].unsqueeze(2)  # (B, T, 1)
@@ -735,20 +635,17 @@ class v8PoseSegLoss(v8PoseLoss):
 
         inside_x = (ax >= x1) & (ax <= x2)  # (B, T, A)
         inside_y = (ay >= y1) & (ay <= y2) # (B, T, A)
-        is_inside = inside_x & inside_y  # (bs, num_gt, num_anchors) (B, T, A) does any of the anchors fall into the gt bboxes
-        is_inside = is_inside.unsqueeze(-1).float()                # (B, T, A, 1)
+        is_inside = inside_x & inside_y  # (B, T, A)
+        is_inside = is_inside.unsqueeze(-1).float() # (B, T, A, 1)
 
-        gt_labels_onehot = torch.nn.functional.one_hot(gt_labels.squeeze(-1).long(), num_classes=extra_info_ch_size)  # (B, T, C)
+        gt_labels_onehot = torch.nn.functional.one_hot(gt_labels.squeeze(-1).long(), num_classes=self.seg_ch_num)  # (B, T, C)
         gt_labels_onehot = gt_labels_onehot.unsqueeze(2).float()  # (B, T, 1, C)
-        
-        # Multiply: (B, T, A, 1) * (B, T, 1, C) *  (B, T, 1, 1) → (B, T, A, C)
         inside_contrib = is_inside * gt_labels_onehot  # (B, T, A, C)
 
-        # Sum over GTs (T) → (B, A, C)
-        # breakpoint()
-        inside_targets = inside_contrib.max(dim=1).values # (B, A, C)
-        loss_per_anchor = self.bce_inside(pred_inside, inside_targets)  # (B, A, C)
+        inside_targets = inside_contrib.max(dim=1).values # (B, A, C) an anchor might fall into various gt boxes
+        loss_per_anchor = self.bce_inside(pred_seg, inside_targets)  # (B, A, C)
         
+        # To handle class imbalance: some gt bboxes are >> than others
         area = ((x2 - x1) * (y2 - y1)).clamp(min=1.0).squeeze(-1)  # (B, T)
         area_weights = 1.0 / area # (B, T)
         batch_indices = torch.arange(batch_size, device=self.device).unsqueeze(1).expand(-1, num_anchors) # (B, A)

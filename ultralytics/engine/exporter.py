@@ -249,6 +249,10 @@ class Exporter:
             'names': model.names}  # model metadata
         if model.task in {'pose', 'pose-contrastive', 'pose-multiclsheads', 'pose-tunablehead', 'pose-segmentation'}:
             self.metadata['kpt_shape'] = model.model[-1].kpt_shape
+        
+        if model.task == 'pose-segmentation':
+            self.metadata['seg_ch_num'] = model.model[-1].seg_ch_num
+
 
         LOGGER.info(f"\n{colorstr('PyTorch:')} starting from '{file}' with input shape {tuple(im.shape)} BCHW and "
                     f'output shape(s) {self.output_shape} ({file_size(file):.1f} MB)')

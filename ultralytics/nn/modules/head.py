@@ -373,13 +373,6 @@ class Pose(Detect):
         if self.training:
             return x, kpt
 
-        # (Pdb) x[0].shape
-        # torch.Size([1, 6, 21])
-        # self.kpts_decode(bs, kpt)
-        # (Pdb) self.kpts_decode(bs, kpt).shape
-        # torch.Size([1, 3, 21])
-        # 6 + 3 = 9
-
         pred_kpt = self.kpts_decode(bs, kpt)
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
 
@@ -401,18 +394,14 @@ class Pose(Detect):
             return y
 
 
-
-class DetectWithExtraInfo(Detect):
-    def __init__(self, nc=80, ch=(), extra_info_ch_size=0):
+class DetectAndSeg(Detect):
+    def __init__(self, nc=80, ch=(), seg_ch_num=1):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__(nc, ch)
-        self.no = nc + self.reg_max * 4 + extra_info_ch_size
-        self.extra_info_ch_size = extra_info_ch_size
-
-        # To store extra information:
+        self.no = nc + self.reg_max * 4 + seg_ch_num
+        self.seg_ch_num = seg_ch_num
         c4 = max(16, ch[0] // 4) 
-        self.cv_inside = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, extra_info_ch_size, 1)) for x in ch)
-
+        self.cv_inside = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, seg_ch_num, 1)) for x in ch)
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
@@ -432,8 +421,8 @@ class DetectWithExtraInfo(Detect):
             cls = x_cat[:, self.reg_max * 4:self.reg_max * 4 + self.nc]
             seg = x_cat[:, self.reg_max * 4 + self.nc:]
         else:
-            box, rest = x_cat.split((self.reg_max * 4, self.nc + self.extra_info_ch_size), 1)
-            cls, seg = rest.split((self.nc, self.extra_info_ch_size), 1)
+            box, rest = x_cat.split((self.reg_max * 4, self.nc + self.seg_ch_num), 1)
+            cls, seg = rest.split((self.nc, self.seg_ch_num), 1)
 
         dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
 
@@ -446,63 +435,41 @@ class DetectWithExtraInfo(Detect):
             img_size = torch.tensor([img_w, img_h, img_w, img_h], device=dbox.device).reshape(1, 4, 1)
             dbox /= img_size
 
-        # (Pdb) cls.shape
-        # torch.Size([4, 2, 84])
-        # (Pdb) seg.shape
-        # torch.Size([4, 2, 84])
-        # (Pdb) dbox.shape
-        # torch.Size([4, 4, 84])
-
-        y = torch.cat((dbox, cls.sigmoid(), seg.sigmoid()), 1)
+        y = torch.cat((dbox, cls.sigmoid(), seg.sigmoid()), 1) # (B, 4=xyxy, A) (B, nc0,..,nci, A), (B, seg0, ..., segj, A)
         return y if self.export else (y, x)
 
 
-class PoseSeg(DetectWithExtraInfo):
+class PoseSeg(DetectAndSeg):
     """YOLOv8 Pose head for keypoints models."""
 
-    def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
+    def __init__(self, nc=80, kpt_shape=(17, 3), ch=(), seg_ch_num=1):
         """Initialize YOLO network with default parameters and Convolutional Layers."""
-        super().__init__(nc=nc, ch=ch, extra_info_ch_size=nc)
-        self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
-        self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
+        super().__init__(nc=nc, ch=ch, seg_ch_num=nc)
+        self.kpt_shape = kpt_shape
+        self.nk = kpt_shape[0] * kpt_shape[1]
         c4 = max(ch[0] // 4, self.nk)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1)) for x in ch)
-
-        self.detect = DetectWithExtraInfo.forward
+        self.detect = DetectAndSeg.forward
 
 
     def forward(self, x):
-        """Perform forward pass through YOLO model and return predictions."""
-        # x = [P3, P4, P5]
-        # each P is (bs, c_i, h_i, w_i) # c_i  = ch[i]
-        bs = x[0].shape[0]  # batch size
+        '''
+        Perform forward pass through YOLO model and return predictions.
+        During training: Assuming 2 seg ch + 2 nc, self.no = 64 (dfl) + 2 (seg) + 2 (cls) = 68
+            x = [P3, P4, P5]
+            Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resoulution(self.stride) [8, 16, 32]
+        After training: 
+            x[0] = (bs, 8=xyxy(bbox),cls0,cls1,seg0,seg1, anchors_len) e.g anchors_len = 8x8 + 4x4 + 2x2 = 84
+            x[1] = [P3, P4, P5]
+        '''
+        bs = x[0].shape[0]
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)
         x = self.detect(self, x)
-
-        # during training
-        # (Pdb) x[0].shape
-        # torch.Size([2, 68, 4, 4])
-        # (Pdb) x[1].shape
-        # torch.Size([2, 68, 2, 2])
-        # (Pdb) x[2].shape
-        # torch.Size([2, 68, 1, 1])
-
-        # right after training
-        # (Pdb) x[0].shape
-        # torch.Size([4, 8, 84])
-        # len(x[1]) = 3
-        # (Pdb) x[1][0].shape
-        # torch.Size([4, 68, 8, 8])
-        # (Pdb) x[1][1].shape
-        # torch.Size([4, 68, 4, 4])
-        # (Pdb) x[1][2].shape
-        # torch.Size([4, 68, 2, 2])
 
         if self.training:
             return x, kpt
 
         pred_kpt = self.kpts_decode(bs, kpt)
-
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
 
 

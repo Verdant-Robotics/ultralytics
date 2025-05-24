@@ -363,8 +363,7 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
     return crop
 
 
-
-@threaded
+# @threaded
 def plot_images(images,
                 batch_idx,
                 cls,
@@ -376,8 +375,6 @@ def plot_images(images,
                 names=None,
                 on_plot=None,
                 seg_results=None,
-                anchor_points=None,
-                strides=None,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -474,74 +471,31 @@ def plot_images(images,
                     if labels or conf[j] > 0.25:  # 0.25 conf thresh
                         annotator.kpts(kpts_[j])
 
-            # Plot segmentation result
             if seg_results is not None:
-                image_segs = seg_results[i] # (filtered_anchors_len, 5=(cx, cy, stride, seg_cls, seg_conf))
+                image_segs = seg_results[i]
+                seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2))
+                strides = image_segs[:, 2].unsqueeze(1)
+                seg_class = image_segs[:, 3].unsqueeze(1)
 
-                seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2)) # (filtered_anchors_len, (x, y))
-                seg_class = image_segs[:, 3].unsqueeze(1) # (filtered_anchors_len, 1)
-
-                stride = 8
-
-                for cx_orig, cy_orig, seg_class in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class):
+                for cx_orig, cy_orig, seg_class, stride in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides):
                     color_id = int(seg_class.item())
                     color = colors(color_id)
 
                     scale_x = w / original_w
                     scale_y = h / original_h
-                    
+
                     cx_scaled = cx_orig * scale_x
                     cy_scaled = cy_orig * scale_y
-                    
+
                     scaled_stride = stride * min(scale_x, scale_y)
                     half_stride = scaled_stride / 2
-                    
+
                     x1 = cx_scaled - half_stride
                     y1 = cy_scaled - half_stride
                     x2 = cx_scaled + half_stride
                     y2 = cy_scaled + half_stride
-
                     box = [x1 + x, y1 + y, x2 + x, y2 + y]
-
                     annotator.box_label(box, color=color)
-
-                # To plot all anchors:
-                # if i in [1, 7]:
-                #      for anchor_idx, (anchor_point, stride_val) in enumerate(zip(anchor_points[i], strides[i])):
-                #         # stride_val = strides[i][]
-                #         # stride_val = torch.Tensor([32])
-
-                #         cx_feat, cy_feat = anchor_point[0].item(), anchor_point[1].item()
-                #         stride = stride_val.item()
-
-                #         cx_orig = cx_feat * stride
-                #         cy_orig = cy_feat * stride
-
-                #         # Step 2: Scale to match the resized image dimensions
-                #         # Scale factor from original to current display size
-                #         scale_x = w / original_w
-                #         scale_y = h / original_h
-                        
-                #         cx_scaled = cx_orig * scale_x
-                #         cy_scaled = cy_orig * scale_y
-                        
-                #         # Step 3: Create anchor box in scaled coordinates
-                #         scaled_stride = stride * min(scale_x, scale_y)  # Scale the stride too
-                #         half_stride = scaled_stride / 2
-                        
-                #         x1 = cx_scaled - half_stride
-                #         y1 = cy_scaled - half_stride
-                #         x2 = cx_scaled + half_stride
-                #         y2 = cy_scaled + half_stride
-                        
-                #         # Step 4: Apply mosaic offset (x, y are the tile positions)
-                #         box = [x1 + x, y1 + y, x2 + x, y2 + y]
-                        
-                #         r = (37 * anchor_idx) % 255
-                #         g = (17 * anchor_idx + 70) % 255
-                #         b = (89 * anchor_idx + 140) % 255
-                #         color = (r, g, b)
-                #         annotator.box_label(box, color=color)
 
             # Plot masks
             if len(masks):

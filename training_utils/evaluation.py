@@ -24,7 +24,7 @@ if __name__ == "__main__":
 
     # args.load = 'runs/neptune/pose-segmentation/train27/weights/best.pt'
 
-    args.load = 'runs/pose-segmentation/train12/weights/best.pt'
+    args.load = 'runs/pose-segmentation/train43/weights/best.pt'
     
     model = YOLO(args.load)
 
