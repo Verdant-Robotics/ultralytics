@@ -174,11 +174,6 @@ def non_max_suppression(
     """
 
     # Checks
-
-    # prediction = (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
-    # (Pdb) prediction[0].shape
-    # torch.Size([4, 9, 84])  # 4=bs, 9 = (x, y, w, h, class1, class2, kpt_x, kpt_y, kpt_conf), 84 = num anchors
-    
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
     assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
     if isinstance(prediction, (list, tuple)):  # YOLOv8 model in validation model, output = (inference_out, loss_out)

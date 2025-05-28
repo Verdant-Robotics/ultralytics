@@ -375,6 +375,8 @@ def plot_images(images,
                 names=None,
                 on_plot=None,
                 seg_results=None,
+                res_grid_size=[8, 16, 32],
+                anchor_strides=None,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -423,9 +425,9 @@ def plot_images(images,
     annotator = Annotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
     for i in range(i + 1):
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
-        annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
-        if paths:
-            annotator.text((x + 5, y + 5), text=Path(paths[i]).name[:40], txt_color=(220, 220, 220))  # filenames
+        # annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
+        # if paths:
+        #     annotator.text((x + 5, y + 5), text=Path(paths[i]).name[:40], txt_color=(220, 220, 220))  # filenames
         if len(cls) > 0:
             idx = batch_idx == i
             classes = cls[idx].astype('int')
@@ -449,12 +451,12 @@ def plot_images(images,
                     c = names.get(c, c) if names else c
                     if labels or conf[j] > 0.25:  # 0.25 conf thresh
                         label = f'{c}' if labels else f'{c} {conf[j]:.1f}'
-                        annotator.box_label(box, label, color=color)
+                        annotator.box_label(box, color=color)
             elif len(classes):
                 for c in classes:
                     color = colors(c)
                     c = names.get(c, c) if names else c
-                    annotator.text((x, y), f'{c}', txt_color=color, box_style=True)
+                    # annotator.text((x, y), f'{c}', txt_color=color, box_style=True)
 
             # Plot keypoints
             if len(kpts):
@@ -478,6 +480,8 @@ def plot_images(images,
                 seg_class = image_segs[:, 3].unsqueeze(1)
 
                 for cx_orig, cy_orig, seg_class, stride in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides):
+                    if stride not in res_grid_size:
+                        continue
                     color_id = int(seg_class.item())
                     color = colors(color_id)
 
@@ -496,6 +500,40 @@ def plot_images(images,
                     y2 = cy_scaled + half_stride
                     box = [x1 + x, y1 + y, x2 + x, y2 + y]
                     annotator.box_label(box, color=color)
+            
+            # for testing purposes will be removed later
+            if anchor_strides is not None:
+                if i in [5]:
+                     for anchor_idx, (anchor_point, stride_val) in enumerate(zip(anchor_strides[0][i], anchor_strides[1][i])):
+                        if stride_val not in res_grid_size:
+                            continue
+
+                        cx_feat, cy_feat = anchor_point[0].item(), anchor_point[1].item()
+                        stride = stride_val.item()
+                        cx_orig = cx_feat * stride
+                        cy_orig = cy_feat * stride
+
+                        scale_x = w / original_w
+                        scale_y = h / original_h
+                        
+                        cx_scaled = cx_orig * scale_x
+                        cy_scaled = cy_orig * scale_y
+                        
+                        scaled_stride = stride * min(scale_x, scale_y)  # Scale the stride too
+                        half_stride = scaled_stride / 2
+                        
+                        x1 = cx_scaled - half_stride
+                        y1 = cy_scaled - half_stride
+                        x2 = cx_scaled + half_stride
+                        y2 = cy_scaled + half_stride
+
+                        box = [x1 + x, y1 + y, x2 + x, y2 + y]
+                        
+                        r = (37 * anchor_idx) % 255
+                        g = (17 * anchor_idx + 70) % 255
+                        b = (89 * anchor_idx + 140) % 255
+                        color = (r, g, b)
+                        annotator.box_label(box, color=color)
 
             # Plot masks
             if len(masks):

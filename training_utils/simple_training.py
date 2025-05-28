@@ -42,7 +42,7 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=300, # 300 or 1
+        epochs=500, # 300 or 1
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
@@ -52,7 +52,7 @@ if __name__ == "__main__":
         batch=128,  # 128
         name=experiment_name,
         device=[0, 1, 2, 3, 4, 5, 6, 7], # [0, 1, 2, 3, 4, 5, 6, 7] for multi-gpu training
-        patience=50,
+        patience=300, # disable early stopping
     )
 
     latest_weights_dir = GetLatestWeightsDir()

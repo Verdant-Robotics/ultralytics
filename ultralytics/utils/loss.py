@@ -620,39 +620,46 @@ class v8PoseSegLoss(v8PoseLoss):
         """
 
         batch_size = gt_bboxes.shape[0]
+        max_detections_len = gt_bboxes.shape[1]  # T max number of detections per batch
         num_anchors = anchor_points.shape[0]
 
-        inside_targets = torch.zeros((batch_size, num_anchors, self.seg_ch_num), device=self.device)
         scaled_anchor_points = anchor_points * stride_tensor
 
-        x1 = gt_bboxes[:, :, 0].unsqueeze(2)  # (B, T, 1)
-        y1 = gt_bboxes[:, :, 1].unsqueeze(2)
-        x2 = gt_bboxes[:, :, 2].unsqueeze(2)
-        y2 = gt_bboxes[:, :, 3].unsqueeze(2)
+        cx = scaled_anchor_points[:, 0].unsqueeze(1) # (A, 1)
+        cy = scaled_anchor_points[:, 1].unsqueeze(1) # (A, 1)
 
-        ax = scaled_anchor_points[:, 0].view(1, 1, -1) # (1, 1, A)
-        ay = scaled_anchor_points[:, 1].view(1, 1, -1)
+        stride_half = stride_tensor / 2
 
-        inside_x = (ax >= x1) & (ax <= x2)  # (B, T, A)
-        inside_y = (ay >= y1) & (ay <= y2) # (B, T, A)
-        is_inside = inside_x & inside_y  # (B, T, A)
-        is_inside = is_inside.unsqueeze(-1).float() # (B, T, A, 1)
+        ax1 = cx - stride_half
+        ay1 = cy - stride_half 
+        ax2 = cx + stride_half
+        ay2 = cy + stride_half
+
+        ax1 = ax1.view(1, -1) # (1, A)
+        ax2 = ax2.view(1, -1)
+        ay1 = ay1.view(1, -1)
+        ay2 = ay2.view(1, -1)
+
+
+        anchor_intersects_gtbbox = torch.zeros((batch_size, max_detections_len, num_anchors), device=self.device, dtype=torch.bool) # (B, T, A)
+        for b in range(batch_size):
+            bbox_x1 = gt_bboxes[b, :, 0].unsqueeze(1)  # (T, 1)
+            bbox_y1 = gt_bboxes[b, :, 1].unsqueeze(1)
+            bbox_x2 = gt_bboxes[b, :, 2].unsqueeze(1)
+            bbox_y2 = gt_bboxes[b, :, 3].unsqueeze(1)
+            no_intersect_in_batch = ((ax1 > bbox_x2) | (bbox_x1 > ax2) | (ay1 > bbox_y2) | (bbox_y1 > ay2))  # (T, A)
+            anchor_intersects_gtbbox[b] = ~no_intersect_in_batch  # (T, A) True if anchor box intersects with gt box
+        anchor_intersects_gtbbox = anchor_intersects_gtbbox.unsqueeze(-1).float() # (B, T, A, 1)
 
         gt_labels_onehot = torch.nn.functional.one_hot(gt_labels.squeeze(-1).long(), num_classes=self.seg_ch_num)  # (B, T, C)
         gt_labels_onehot = gt_labels_onehot.unsqueeze(2).float()  # (B, T, 1, C)
-        inside_contrib = is_inside * gt_labels_onehot  # (B, T, A, C)
-
-        inside_targets = inside_contrib.max(dim=1).values # (B, A, C) an anchor might fall into various gt boxes
-        loss_per_anchor = self.bce_inside(pred_seg, inside_targets)  # (B, A, C)
+        anchor_labels = anchor_intersects_gtbbox * gt_labels_onehot  # (B, T, A, C)
+        target_seg = anchor_labels.max(dim=1).values # (B, A, C) an anchor might fall into mutiple gt boxes
         
-        # To handle class imbalance: some gt bboxes are >> than others
-        area = ((x2 - x1) * (y2 - y1)).clamp(min=1.0).squeeze(-1)  # (B, T)
-        area_weights = 1.0 / area # (B, T)
-        batch_indices = torch.arange(batch_size, device=self.device).unsqueeze(1).expand(-1, num_anchors) # (B, A)
-        anchor_weights = area_weights[batch_indices, target_gt_idx] # (B, A)
-        anchor_weights = torch.where(fg_mask, anchor_weights, torch.ones_like(anchor_weights)) # (B, A)
+        loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
+        anchor_weights = torch.ones_like(loss_per_anchor)  # (B, A, C) no weights for now
+        weighted_loss = loss_per_anchor * anchor_weights # (B, A, C)
 
-        weighted_loss = loss_per_anchor * anchor_weights.unsqueeze(-1) # (B, A, C)
         return weighted_loss.mean()
         
 

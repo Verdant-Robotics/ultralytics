@@ -30,6 +30,7 @@ class PoseSegPredictor(DetectionPredictor):
 
     def postprocess(self, preds, img, orig_imgs):
         """Return detection results for a given input image or list of images."""
+        # TODO add seg
         preds = ops.non_max_suppression(preds,
                                         self.args.conf,
                                         self.args.iou,

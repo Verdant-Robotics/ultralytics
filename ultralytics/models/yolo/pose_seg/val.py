@@ -53,8 +53,8 @@ class PoseSegValidator(DetectionValidator):
     def process_seg_result(self, preds):
         """
         preds = x_flat, ([P1, P2, P3], kpt)
+        Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resoulution(self.stride)
         x_flat = (bs, 8=xyxy(bbox),cls0,cls1,seg0,seg1, anchors_len) e.g anchors_len = 8x8 + 4x4 + 2x2 = 84
-        Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resoulution(self.stride) [8, 16, 32]
         """
 
         Pi_list = preds[1][0]  # [P1, P2, P3]
@@ -69,17 +69,24 @@ class PoseSegValidator(DetectionValidator):
         seg0 = seg_logits[:, 0, :]
         seg1 = seg_logits[:, 1, :]
 
-        is_c = seg0 > seg1
-        is_w = seg1 > seg0
-        seg_mask = (is_c & (seg0 > self.args.seg_conf_c)) | (is_w & (seg1 > self.args.seg_conf_w))  # (B, A)
+        seg_mask = (seg0 > self.args.seg_conf_c) | (seg1 > self.args.seg_conf_w)  # (B, A)
 
         seg_results = []
         for b in range(seg_logits.shape[0]):
             selected_anchor_points = anchor_points[b, :, seg_mask[b]]  # (2=(cx, cy), filtered_anchors) 
             selected_strides = strides[b, :, seg_mask[b]]              # (1=stride, filtered_anchors)
             selected_seg = seg_logits[b, :, seg_mask[b]]               # (2=(seg0, seg1), filtered_anchors)
-            seg_class = selected_seg.argmax(dim=0, keepdim=True)       # (filtered_anchors)
-            seg_conf = selected_seg.max(dim=0, keepdim=True).values    # (filtered_anchors)
+
+            conf_c = selected_seg[0, :] > self.args.seg_conf_c
+            conf_w = selected_seg[1, :] > self.args.seg_conf_w
+            
+            seg_class = torch.full((1, selected_seg.shape[1]), fill_value=-1, device=selected_seg.device)
+
+            # If both seg0 and seg1 are above the threshold, assign seg_class = 5 else, assign the label to be the one with conf > threshold
+            seg_class[0, conf_c & conf_w] = 5 
+            seg_class[0, (conf_c & ~conf_w) | (~conf_c & conf_w )] = selected_seg.argmax(dim=0)[(conf_c & ~conf_w) | (~conf_c & conf_w)]  # Assign the one with conf > threshold
+
+            seg_conf = selected_seg.max(dim=0, keepdim=True).values 
             combined = torch.cat([
                 selected_anchor_points,
                 selected_strides,
@@ -89,10 +96,10 @@ class PoseSegValidator(DetectionValidator):
             combined = combined.transpose(0, 1)  # (filtered_anchors, 5)
             seg_results.append(combined)
         
-        anchor_points = anchor_points.permute(0, 2, 1)
-        strides = strides.permute(0, 2, 1)
+        anchor_points = anchor_points.permute(0, 2, 1) # This and strides are returned for testing purposes only
+        strides = strides.permute(0, 2, 1) # ^
 
-        return seg_results
+        return seg_results, anchor_points, strides
 
 
     def postprocess(self, preds):
@@ -214,38 +221,92 @@ class PoseSegValidator(DetectionValidator):
 
     def plot_predictions(self, batch, preds, ni):
         """Plots predictions for YOLO model."""
-
-        seg_results = preds[1]
-
+        seg_results, anchor_points, strides = preds[1]
         preds = preds[0]
         pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in preds], 0)
 
         batch_idx, cls, bboxes = output_to_target(preds, max_det=self.args.max_det)
+
+        # plot seg results
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'val_batch{ni}_seg_pred_res8.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    seg_results=seg_results,
+                    res_grid_size=[8]
+                    )
         
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
-                    # bboxes=bboxes,
-                    # kpts=pred_kpts,
                     paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_seg_pred.jpg',
+                    fname=self.save_dir / f'val_batch{ni}_seg_pred_res16.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
+                    res_grid_size=[16]
+                    )
+
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'val_batch{ni}_seg_pred_res32.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    seg_results=seg_results,
+                    res_grid_size=[32]
                     )
         
+        # plot bbox and kpts
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
                     bboxes=bboxes,
                     kpts=pred_kpts,
                     paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_pred.jpg',
+                    fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
-                    # seg_results=seg_results,
                     )
 
+        # Plot anchors
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'val_batch{ni}_anchors8.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    anchor_strides = (anchor_points, strides),
+                    res_grid_size=[8] # 8, 16, 32
+                    )
+    
+
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'val_batch{ni}_anchors16.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    anchor_strides = (anchor_points, strides),
+                    res_grid_size=[16]
+                    )
+        
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    paths=batch['im_file'],
+                    fname=self.save_dir / f'val_batch{ni}_anchors32.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    anchor_strides = (anchor_points, strides),
+                    res_grid_size=[32]
+                    )
 
 
     def pred_to_json(self, predn, filename):

@@ -54,43 +54,6 @@ def select_highest_overlaps(mask_pos, overlaps, n_max_boxes):
         fg_mask = mask_pos.sum(-2)
     # Find each grid serve which gt(index)
     target_gt_idx = mask_pos.argmax(-2)  # (b, h*w)
-    '''
-        before: 
-        mask_pos = ([
-        [  # GT box 0
-            [1, 0, 0, 0],  # assigned to anchor 0
-        ],
-        [  # GT box 1
-            [0, 1, 0, 1],  # assigned to anchor 1 and 3
-        ],
-        [  # GT box 2
-            [0, 0, 1, 1],  # assigned to anchor 2 and 3
-        ]]) shape = (1, 3, 4)
-        
-        fg_mask = mask_pos.sum(-2)
-        fg_mask = ([
-            [1, 1, 1, 2],  # anchor 3 has 2 gt boxes
-        ]) shape = (1, 4)
-
-        After fixing mask_pos to only have one gt box per anchor, not sure how it actualy does but here is test result
-        mask_pos = ([
-        [  # GT box 0
-            [1, 0, 0, 0],  # assigned to anchor 0
-        ],
-        [  # GT box 1
-            [0, 1, 0, 0],  # assigned to anchor 1
-        ],
-        [  # GT box 2
-            [0, 0, 1, 1],  # assigned to anchor 2 and 3
-        ]]) shape = (1, 3, 4)
-        fg_mask = mask_pos.sum(-2)
-        fg_mask = ([
-            [1, 1, 1, 1],  # anchor 0 now has one gt box same for anchor 1, 2, 3
-        ]) shape = (1, 4)
-        target_gt_idx = mask_pos.argmax(-2)  # (b, h*w)
-        tensor([[0, 1, 2, 2]]) # anchor 0 assigned to gt box 0, anchor 1 assigned to gt box 1, anchor 2 and 3 assigned to gt box 2
-    '''
-
     return target_gt_idx, fg_mask, mask_pos
 
 
@@ -284,13 +247,12 @@ class TaskAlignedAssigner(nn.Module):
 
 
 def make_anchors(feats, strides, grid_cell_offset=0.5):
-    """Generate anchors from features. Relies on feature shape not the content.
-    """
+    """Generate anchors from features. Relies on feature shape not the content."""
     anchor_points, stride_tensor = [], []
     assert feats is not None
     dtype, device = feats[0].dtype, feats[0].device
     for i, stride in enumerate(strides):
-        _, _, h, w = feats[i].shape # bs, ch, h, w
+        _, _, h, w = feats[i].shape
         sx = torch.arange(end=w, device=device, dtype=dtype) + grid_cell_offset  # shift x
         sy = torch.arange(end=h, device=device, dtype=dtype) + grid_cell_offset  # shift y
         sy, sx = torch.meshgrid(sy, sx, indexing='ij') if TORCH_1_10 else torch.meshgrid(sy, sx)
