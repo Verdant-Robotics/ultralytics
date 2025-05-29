@@ -274,39 +274,39 @@ class PoseSegValidator(DetectionValidator):
                     )
 
         # Plot anchors
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_anchors8.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    anchor_strides = (anchor_points, strides),
-                    res_grid_size=[8] # 8, 16, 32
-                    )
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             paths=batch['im_file'],
+        #             fname=self.save_dir / f'val_batch{ni}_anchors8.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             anchor_strides = (anchor_points, strides),
+        #             res_grid_size=[8] # 8, 16, 32
+        #             )
     
 
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_anchors16.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    anchor_strides = (anchor_points, strides),
-                    res_grid_size=[16]
-                    )
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             paths=batch['im_file'],
+        #             fname=self.save_dir / f'val_batch{ni}_anchors16.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             anchor_strides = (anchor_points, strides),
+        #             res_grid_size=[16]
+        #             )
         
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_anchors32.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    anchor_strides = (anchor_points, strides),
-                    res_grid_size=[32]
-                    )
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             paths=batch['im_file'],
+        #             fname=self.save_dir / f'val_batch{ni}_anchors32.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             anchor_strides = (anchor_points, strides),
+        #             res_grid_size=[32]
+        #             )
 
 
     def pred_to_json(self, predn, filename):

@@ -421,8 +421,7 @@ class DetectAndSeg(Detect):
             cls = x_cat[:, self.reg_max * 4:self.reg_max * 4 + self.nc]
             seg = x_cat[:, self.reg_max * 4 + self.nc:]
         else:
-            box, rest = x_cat.split((self.reg_max * 4, self.nc + self.seg_ch_num), 1)
-            cls, seg = rest.split((self.nc, self.seg_ch_num), 1)
+            box, cls, seg = x_cat.split((self.reg_max * 4, self.nc, self.seg_ch_num), 1)
 
         dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
 

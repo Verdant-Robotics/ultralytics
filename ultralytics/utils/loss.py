@@ -538,8 +538,7 @@ class v8PoseSegLoss(v8PoseLoss):
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
 
-        pred_distri, rest = all_preds.split((self.reg_max * 4, self.nc + self.seg_ch_num), 1)
-        pred_scores, pred_seg = rest.split((self.nc, self.seg_ch_num), 1)
+        pred_distri, pred_scores, pred_seg = all_preds.split((self.reg_max * 4, self.nc, self.seg_ch_num), 1)
 
         # B, grids, ..
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
@@ -590,8 +589,7 @@ class v8PoseSegLoss(v8PoseLoss):
                 stride_tensor=stride_tensor,
                 gt_bboxes=gt_bboxes,
                 gt_labels=gt_labels,
-                target_gt_idx=target_gt_idx,
-                fg_mask=fg_mask,
+                mask_gt=mask_gt
             )
 
 
@@ -604,7 +602,7 @@ class v8PoseSegLoss(v8PoseLoss):
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
 
-    def calculate_seg_loss(self, pred_seg, anchor_points, stride_tensor, gt_bboxes, gt_labels, target_gt_idx, fg_mask):
+    def calculate_seg_loss(self, pred_seg, anchor_points, stride_tensor, gt_bboxes, gt_labels, mask_gt):
         """
         Args:
             pred_seg (B, A, seg_ch_num): predicted seg result for anchor points
@@ -612,16 +610,15 @@ class v8PoseSegLoss(v8PoseLoss):
             stride_tensor (A, 1)
             gt_bboxes (B, T, 4) -> (bs, each bs has 1 gt, xyxy)
             gt_labels (B, T, 1): gt_labels[b_idx][gt_idx] = class_label
-            target_gt_idx (B, anchors_num): target_gt_idx[bs][anchor_idx] = gt_idx
-            fg_mask (bs, anchors_num): fg_mask[b_idx][anchor_idx] = True if anchor has gt else False
-            seg_ch_num (int): number of channels needed to perform segmentation
+            mask_gt (B, T, 1): mask_gt[b_idx][gt_idx] = 1.0 if gt exists else 0.0
         Returns:
             loss (torch.Tensor): calculated loss
         """
 
         batch_size = gt_bboxes.shape[0]
-        max_detections_len = gt_bboxes.shape[1]  # T max number of detections per batch
+        max_gt_len_in_tot = gt_bboxes.shape[1]  # T  max number of ground truth labels per image, over all images in the batch.
         num_anchors = anchor_points.shape[0]
+        mask_gt = mask_gt > 0.5 # convert to boolean mask
 
         scaled_anchor_points = anchor_points * stride_tensor
 
@@ -640,15 +637,16 @@ class v8PoseSegLoss(v8PoseLoss):
         ay1 = ay1.view(1, -1)
         ay2 = ay2.view(1, -1)
 
-
-        anchor_intersects_gtbbox = torch.zeros((batch_size, max_detections_len, num_anchors), device=self.device, dtype=torch.bool) # (B, T, A)
+        anchor_intersects_gtbbox = torch.zeros((batch_size, max_gt_len_in_tot, num_anchors), device=self.device, dtype=torch.bool) # (B, T, A)
         for b in range(batch_size):
-            bbox_x1 = gt_bboxes[b, :, 0].unsqueeze(1)  # (T, 1)
-            bbox_y1 = gt_bboxes[b, :, 1].unsqueeze(1)
-            bbox_x2 = gt_bboxes[b, :, 2].unsqueeze(1)
-            bbox_y2 = gt_bboxes[b, :, 3].unsqueeze(1)
-            no_intersect_in_batch = ((ax1 > bbox_x2) | (bbox_x1 > ax2) | (ay1 > bbox_y2) | (bbox_y1 > ay2))  # (T, A)
-            anchor_intersects_gtbbox[b] = ~no_intersect_in_batch  # (T, A) True if anchor box intersects with gt box
+            mask_gt_b = mask_gt[b].squeeze(-1)
+            bbox_x1 = gt_bboxes[b, mask_gt_b, 0].unsqueeze(1)  # (T, 1)
+            bbox_y1 = gt_bboxes[b, mask_gt_b, 1].unsqueeze(1)
+            bbox_x2 = gt_bboxes[b, mask_gt_b, 2].unsqueeze(1)
+            bbox_y2 = gt_bboxes[b, mask_gt_b, 3].unsqueeze(1)
+            intersection_in_batch = ((ax1 <= bbox_x2) & (bbox_x1 <= ax2) & (ay1 <= bbox_y2) & (bbox_y1 <= ay2))  # (T, A)
+            anchor_intersects_gtbbox[b, mask_gt_b, :] = intersection_in_batch
+            anchor_intersects_gtbbox[b, ~mask_gt_b, :] = False  # set to False for anchors without gt
         anchor_intersects_gtbbox = anchor_intersects_gtbbox.unsqueeze(-1).float() # (B, T, A, 1)
 
         gt_labels_onehot = torch.nn.functional.one_hot(gt_labels.squeeze(-1).long(), num_classes=self.seg_ch_num)  # (B, T, C)

@@ -355,7 +355,7 @@ class SegmentationModel(DetectionModel):
 
 
 class PoseModel(DetectionModel):
-    """YOLOv8 pose Seg model."""
+    """YOLOv8 pose model."""
 
     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         """Initialize YOLOv8 Pose model."""
