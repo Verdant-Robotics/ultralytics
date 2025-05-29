@@ -30,13 +30,13 @@ class PosePredictor(DetectionPredictor):
 
     def postprocess(self, preds, img, orig_imgs):
         """Return detection results for a given input image or list of images."""
-        preds = ops.non_max_suppression(preds,
-                                        self.args.conf,
-                                        self.args.iou,
+        preds = ops.non_max_suppression(prediction=preds,
+                                        nc=len(self.model.names),
+                                        conf_thres=self.args.conf,
+                                        iou_thres=self.args.iou,
                                         agnostic=self.args.agnostic_nms,
                                         max_det=self.args.max_det,
-                                        classes=self.args.classes,
-                                        nc=len(self.model.names))
+                                        classes=self.args.classes,)
 
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
             orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)

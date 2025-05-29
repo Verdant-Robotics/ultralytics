@@ -445,7 +445,6 @@ class v8PoseLoss(v8DetectionLoss):
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
-
     @staticmethod
     def kpts_decode(anchor_points, pred_kpts):
         """Decodes predicted keypoints to image coordinates."""
@@ -608,7 +607,7 @@ class v8PoseSegLoss(v8PoseLoss):
             pred_seg (B, A, seg_ch_num): predicted seg result for anchor points
             anchor_points(A, 2=(x,y))
             stride_tensor (A, 1)
-            gt_bboxes (B, T, 4) -> (bs, each bs has 1 gt, xyxy)
+            gt_bboxes (B, T, 4)
             gt_labels (B, T, 1): gt_labels[b_idx][gt_idx] = class_label
             mask_gt (B, T, 1): mask_gt[b_idx][gt_idx] = 1.0 if gt exists else 0.0
         Returns:

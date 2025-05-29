@@ -719,41 +719,10 @@ def output_to_target(output, max_det=300):
     targets = []
     for i, o in enumerate(output):
         box, conf, cls = o[:max_det, :6].cpu().split((4, 1, 1), 1)
-
         j = torch.full((conf.shape[0], 1), i)
         targets.append(torch.cat((j, cls, ops.xyxy2xywh(box), conf), 1))
     targets = torch.cat(targets, 0).numpy()
     return targets[:, 0], targets[:, 1], targets[:, 2:]
-
-
-def output_to_target_for_pose(output, max_det=300):
-    """
-    Convert model output to target format:
-    [batch_id, classification_class, x, y, w, h, classification_conf, seg_class, seg_conf] for plotting.
-    Assumes segmentation outputs always exist.
-    # assumes nc=2, extra_ch_size=2
-    """
-    targets = []
-    for i, o in enumerate(output): # per each image
-        box, cls_0, cls_1 = o[:max_det, :6].cpu().split((4, 1, 1), dim=1)
-        cls_probs = torch.cat((cls_0, cls_1), dim=1)
-        conf, cls = cls_probs.max(dim=1, keepdim=True)
-        j = torch.full((conf.shape[0], 1), i, dtype=torch.float32)
-        target = torch.cat((
-            j,                              # image index
-            cls,                            # predicted classification class index
-            ops.xyxy2xywh(box),             # bounding box converted from xyxy to xywh
-            conf,                           # classification confidence
-        ), dim=1)
-        targets.append(target)
-
-    targets = torch.cat(targets, dim=0).numpy()
-    batch_ids = targets[:, 0]
-    classes = targets[:, 1]
-    boxes = targets[:, 2:6]
-    confs = targets[:, 6]
-
-    return batch_ids, classes, boxes, confs
 
 
 def feature_visualization(x, module_type, stage, n=32, save_dir=Path('runs/detect/exp')):

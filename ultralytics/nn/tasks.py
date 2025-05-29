@@ -369,24 +369,14 @@ class PoseModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseLoss(self)
-    
 
-class PoseSegModel(DetectionModel):
-    """YOLOv8 pose model."""
 
+class PoseSegModel(PoseModel):
     def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
-        """Initialize YOLOv8 Pose model."""
-        if not isinstance(cfg, dict):
-            cfg = yaml_model_load(cfg)  # load model YAML
-        if any(data_kpt_shape) and list(data_kpt_shape) != list(cfg['kpt_shape']):
-            LOGGER.info(f"Overriding model.yaml kpt_shape={cfg['kpt_shape']} with kpt_shape={data_kpt_shape}")
-            cfg['kpt_shape'] = data_kpt_shape
-        super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
+        super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
 
     def init_criterion(self):
-        """Initialize the loss criterion for the PoseModel."""
         return v8PoseSegLoss(self)
-
 
 
 class PoseTunableHeadModel(PoseModel):

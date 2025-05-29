@@ -42,7 +42,7 @@ def select_highest_overlaps(mask_pos, overlaps, n_max_boxes):
         mask_pos (Tensor): shape(b, n_max_boxes, h*w)
     """
     # (b, n_max_boxes, h*w) -> (b, h*w)
-    fg_mask = mask_pos.sum(-2) 
+    fg_mask = mask_pos.sum(-2)
     if fg_mask.max() > 1:  # one anchor is assigned to multiple gt_bboxes
         mask_multi_gts = (fg_mask.unsqueeze(1) > 1).expand(-1, n_max_boxes, -1)  # (b, n_max_boxes, h*w)
         max_overlaps_idx = overlaps.argmax(1)  # (b, h*w)

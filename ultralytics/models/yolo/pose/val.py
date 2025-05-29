@@ -50,14 +50,14 @@ class PoseValidator(DetectionValidator):
 
     def postprocess(self, preds):
         """Apply non-maximum suppression and return detections with high confidence scores."""
-        return ops.non_max_suppression(preds,
-                                       self.args.conf,
-                                       self.args.iou,
+        return ops.non_max_suppression(prediction=preds,
+                                       nc=self.nc,
+                                       conf_thres=self.args.conf,
+                                       iou_thres=self.args.iou,
                                        labels=self.lb,
                                        multi_label=True,
                                        agnostic=self.args.single_cls,
-                                       max_det=self.args.max_det,
-                                       nc=self.nc)
+                                       max_det=self.args.max_det)
 
     def init_metrics(self, model):
         """Initiate pose estimation metrics for YOLO model."""
