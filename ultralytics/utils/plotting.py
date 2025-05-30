@@ -477,7 +477,7 @@ def plot_images(images,
                 for cx_orig, cy_orig, seg_class, stride in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides):
                     if stride not in res_grid_size:
                         continue
-                    if seg_class == -1: # to visualize segments that belong to both classes
+                    if seg_class == -1: # to visualize segments that belong to all classes
                         seg_class = torch.Tensor([5])
 
                     color_id = int(seg_class.item())

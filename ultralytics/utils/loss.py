@@ -569,7 +569,7 @@ class v8PoseSegLoss(v8PoseLoss):
         # Cls loss
         loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
-        # Bbox, kpt, and, seg loss
+        # Bbox, kpt
         if fg_mask.sum(): # if any anchor has gt
             target_bboxes /= stride_tensor
             loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
@@ -580,8 +580,7 @@ class v8PoseSegLoss(v8PoseLoss):
 
             loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
                                                              stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
-
-            loss[5] = self.calculate_seg_loss(
+        loss[5] = self.calculate_seg_loss(
                 pred_seg=pred_seg,
                 anchor_points=anchor_points,
                 stride_tensor=stride_tensor,

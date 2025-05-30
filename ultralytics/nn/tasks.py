@@ -373,6 +373,7 @@ class PoseModel(DetectionModel):
 class PoseSegModel(PoseModel):
     def __init__(self, cfg='yolov8n-pose-seg.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
+        self.seg_ch_num = self.yaml.get('seg_ch_num')
 
     def init_criterion(self):
         return v8PoseSegLoss(self)

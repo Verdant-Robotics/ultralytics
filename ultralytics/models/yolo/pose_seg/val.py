@@ -20,19 +20,24 @@ class PoseSegValidator(PoseValidator):
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
         self.args.task = 'pose-segmentation'
 
+    def init_metrics(self, model):
+        super().init_metrics(model)
+        self.seg_ch_num = self.model.seg_ch_num
+
     def process_seg_result(self, preds):
         """
-        preds = x_flat, ([P1, P2, P3], kpt)
-        Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resolution(self.stride)
-        x_flat = (bs, 8=xyxy(bbox),cls0,cls1,seg0,seg1, anchors_len) e.g anchors_len = 8x8 + 4x4 + 2x2 = 84
+        Input: 
+            preds = x_flat, ([P1, P2, P3], kpt)
+            Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resolution(self.stride)
+            x_flat = (bs, xyxy(bbox),cls0,..,clsi,seg0,...,segj, A) e.g A = anchors_len = 8x8 + 4x4 + 2x2 = 84
+        Output:
+            seg_logit (B, seg_ch_num, A)
+            Pi_list for reconstructing anchors later on
         """
-        Pi_list = preds[1][0]  # [P1, P2, P3] Needs to be returned to reconstruct anchors later on
+        Pi_list = preds[1][0]
         x_flat = preds[0]
-        seg_logits = x_flat[:, 6:8, :]
-        seg0 = seg_logits[:, 0, :]
-        seg1 = seg_logits[:, 1, :]
-        seg_mask = (seg0 > self.args.seg_conf_c) | (seg1 > self.args.seg_conf_w)  # (B, A)
-        return seg_logits, seg_mask, Pi_list
+        seg_logits = x_flat[:, 6:6+self.seg_ch_num, :]
+        return seg_logits, Pi_list
 
 
     def postprocess(self, preds):
@@ -106,7 +111,15 @@ class PoseSegValidator(PoseValidator):
             # if self.args.save_txt:
             #    save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
 
-    def map_anchors_to_seg(self, seg_logits, seg_mask, Pi_list):
+    def map_anchors_to_seg(self, seg_logits, Pi_list):
+        '''
+        Maps each anchor to its corresponding segmentation class.
+        Input:
+            seg_logit (B, seg_ch_num, A) - logits for each segmentation class for each anchor
+            Pi_list feature list used to construct the anchor points
+        Output:
+            seg_results (list of tensors) - each tensor contains anchor points, strides, seg_class, seg_conf
+        '''
         stride_tensor = self.model.stride
         if type(stride_tensor) is int: # When models are loaded, model.stride is the max stride
             max_stride = stride_tensor 
@@ -117,17 +130,16 @@ class PoseSegValidator(PoseValidator):
         strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1, A)
         anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A) 
 
+        seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
         seg_results = []
-        for b in range(seg_logits.shape[0]):
+        for b in range(bs):
             selected_anchor_points = anchor_points[b, :, seg_mask[b]]
             selected_strides = strides[b, :, seg_mask[b]]
             selected_seg = seg_logits[b, :, seg_mask[b]]
-            conf_c = selected_seg[0, :] > self.args.seg_conf_c
-            conf_w = selected_seg[1, :] > self.args.seg_conf_w
+            conf_flags = selected_seg > self.args.seg_conf
+            single_confident = (conf_flags.sum(dim=0) == 1) # Only one seg class is confident for this anchor point. If more are confident, class will be -1
             seg_class = torch.full((1, selected_seg.shape[1]), fill_value=-1, device=selected_seg.device)
-
-            # If both seg0 and seg1 are above the threshold, seg_class will stay -1 else, it will assign the label to be the one with conf > threshold
-            seg_class[0, (conf_c & ~conf_w) | (~conf_c & conf_w )] = selected_seg.argmax(dim=0)[(conf_c & ~conf_w) | (~conf_c & conf_w)]
+            seg_class[0, single_confident] = selected_seg.argmax(dim=0)[single_confident]
             seg_conf = selected_seg.max(dim=0, keepdim=True).values 
             combined = torch.cat([
                 selected_anchor_points,
@@ -145,8 +157,8 @@ class PoseSegValidator(PoseValidator):
         pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
         batch_idx, cls, bboxes = output_to_target(pred_bbox_kpts, max_det=self.args.max_det)
 
-        pred_seg, seg_mask, Pi_list  = predictions[1]
-        seg_results = self.map_anchors_to_seg(seg_logits=pred_seg, seg_mask=seg_mask, Pi_list=Pi_list)
+        pred_seg, Pi_list  = predictions[1]
+        seg_results = self.map_anchors_to_seg(seg_logits=pred_seg, Pi_list=Pi_list)
 
         # plot bbox and kpts
         plot_images(images=batch['img'],
