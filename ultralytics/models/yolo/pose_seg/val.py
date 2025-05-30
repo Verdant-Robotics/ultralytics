@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from ultralytics.models.yolo.detect import DetectionValidator
+from ultralytics.models.yolo.pose import PoseValidator
 from ultralytics.utils import LOGGER, ops
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.metrics import OKS_SIGMA, PoseMetrics, box_iou, kpt_iou
@@ -13,93 +13,26 @@ from ultralytics.utils.plotting import output_to_target, plot_images
 from ultralytics.utils.tal import make_anchors
 
 
-class PoseSegValidator(DetectionValidator):
-    """
-    A class extending the DetectionValidator class for validation based on a pose model.
-
-    Example:
-        ```python
-        from ultralytics.models.yolo.pose import PoseValidator
-
-        args = dict(model='yolov8n-pose.pt', data='coco8-pose.yaml')
-        validator = PoseValidator(args=args)
-        validator()
-        ```
-    """
+class PoseSegValidator(PoseValidator):
 
     def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
         """Initialize a 'PoseValidator' object with custom parameters and assigned attributes."""
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
-        self.sigma = None
-        self.kpt_shape = None
-        self.args.task = 'pose'
-        self.metrics = PoseMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
-        if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
-            LOGGER.warning("WARNING ⚠️ Apple MPS known Pose bug. Recommend 'device=cpu' for Pose models. "
-                           'See https://github.com/ultralytics/ultralytics/issues/4031.')
-
-    def preprocess(self, batch):
-        """Preprocesses the batch by converting the 'keypoints' data into a float and moving it to the device."""
-        batch = super().preprocess(batch)
-        batch['keypoints'] = batch['keypoints'].to(self.device).float()
-        return batch
-
-    def get_desc(self):
-        """Returns description of evaluation metrics in string format."""
-        return ('%22s' + '%11s' * 10) % ('Class', 'Images', 'Instances', 'Box(P', 'R', 'mAP50', 'mAP50-95)', 'Pose(P',
-                                         'R', 'mAP50', 'mAP50-95)')
-
+        self.args.task = 'pose-segmentation'
 
     def process_seg_result(self, preds):
         """
         preds = x_flat, ([P1, P2, P3], kpt)
-        Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resoulution(self.stride)
+        Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resolution(self.stride)
         x_flat = (bs, 8=xyxy(bbox),cls0,cls1,seg0,seg1, anchors_len) e.g anchors_len = 8x8 + 4x4 + 2x2 = 84
         """
-
-        Pi_list = preds[1][0]  # [P1, P2, P3]
-        anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, torch.Tensor([8, 16, 32]), 0.5))
-        
-        bs = Pi_list[0].shape[0]
-        strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1(stride), A)
-        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2(cx, cy), A) 
-
+        Pi_list = preds[1][0]  # [P1, P2, P3] Needs to be returned to reconstruct anchors later on
         x_flat = preds[0]
         seg_logits = x_flat[:, 6:8, :]
         seg0 = seg_logits[:, 0, :]
         seg1 = seg_logits[:, 1, :]
-
         seg_mask = (seg0 > self.args.seg_conf_c) | (seg1 > self.args.seg_conf_w)  # (B, A)
-
-        seg_results = []
-        for b in range(seg_logits.shape[0]):
-            selected_anchor_points = anchor_points[b, :, seg_mask[b]]  # (2=(cx, cy), filtered_anchors) 
-            selected_strides = strides[b, :, seg_mask[b]]              # (1=stride, filtered_anchors)
-            selected_seg = seg_logits[b, :, seg_mask[b]]               # (2=(seg0, seg1), filtered_anchors)
-
-            conf_c = selected_seg[0, :] > self.args.seg_conf_c
-            conf_w = selected_seg[1, :] > self.args.seg_conf_w
-            
-            seg_class = torch.full((1, selected_seg.shape[1]), fill_value=-1, device=selected_seg.device)
-
-            # If both seg0 and seg1 are above the threshold, assign seg_class = 5 else, assign the label to be the one with conf > threshold
-            seg_class[0, conf_c & conf_w] = 5 
-            seg_class[0, (conf_c & ~conf_w) | (~conf_c & conf_w )] = selected_seg.argmax(dim=0)[(conf_c & ~conf_w) | (~conf_c & conf_w)]  # Assign the one with conf > threshold
-
-            seg_conf = selected_seg.max(dim=0, keepdim=True).values 
-            combined = torch.cat([
-                selected_anchor_points,
-                selected_strides,
-                seg_class,
-                seg_conf,
-            ], dim=0)
-            combined = combined.transpose(0, 1)  # (filtered_anchors, 5)
-            seg_results.append(combined)
-        
-        anchor_points = anchor_points.permute(0, 2, 1) # This and strides are returned for testing purposes only
-        strides = strides.permute(0, 2, 1) # ^
-
-        return seg_results, anchor_points, strides
+        return seg_logits, seg_mask, Pi_list
 
 
     def postprocess(self, preds):
@@ -115,16 +48,8 @@ class PoseSegValidator(DetectionValidator):
                                        agnostic=self.args.single_cls,
                                        max_det=self.args.max_det), self.process_seg_result(preds)
 
-    def init_metrics(self, model):
-        """Initiate pose estimation metrics for YOLO model."""
-        super().init_metrics(model)
-        self.kpt_shape = self.data['kpt_shape']
-        is_pose = self.kpt_shape == [17, 3]
-        nkpt = self.kpt_shape[0]
-        self.sigma = OKS_SIGMA if is_pose else np.ones(nkpt) / nkpt
-
     def update_metrics(self, preds, batch):
-        """Metrics."""
+        """This is copied from PoseValidator. For unknown reasons, it will not work if we don't copy it here."""
         preds = preds[0]
         for si, pred in enumerate(preds):
             idx = batch['batch_idx'] == si
@@ -181,58 +106,64 @@ class PoseSegValidator(DetectionValidator):
             # if self.args.save_txt:
             #    save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
 
-    def _process_batch(self, detections, labels, pred_kpts=None, gt_kpts=None):
-        """
-        Return correct prediction matrix.
+    def map_anchors_to_seg(self, seg_logits, seg_mask, Pi_list):
+        stride_tensor = self.model.stride
+        if type(stride_tensor) is int: # When models are loaded, model.stride is the max stride
+            max_stride = stride_tensor 
+            stride_tensor = torch.tensor([max_stride/4, max_stride/2, max_stride])
 
-        Args:
-            detections (torch.Tensor): Tensor of shape [N, 6] representing detections.
-                Each detection is of the format: x1, y1, x2, y2, conf, class.
-            labels (torch.Tensor): Tensor of shape [M, 5] representing labels.
-                Each label is of the format: class, x1, y1, x2, y2.
-            pred_kpts (torch.Tensor, optional): Tensor of shape [N, 51] representing predicted keypoints.
-                51 corresponds to 17 keypoints each with 3 values.
-            gt_kpts (torch.Tensor, optional): Tensor of shape [N, 51] representing ground truth keypoints.
+        anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, stride_tensor, 0.5))
+        bs = Pi_list[0].shape[0]
+        strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1, A)
+        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A) 
 
-        Returns:
-            torch.Tensor: Correct prediction matrix of shape [N, 10] for 10 IoU levels.
-        """
-        if pred_kpts is not None and gt_kpts is not None:
-            # `0.53` is from https://github.com/jin-s13/xtcocoapi/blob/master/xtcocotools/cocoeval.py#L384
-            area = ops.xyxy2xywh(labels[:, 1:])[:, 2:].prod(1) * 0.53
-            iou = kpt_iou(gt_kpts, pred_kpts, sigma=self.sigma, area=area)
-        else:  # boxes
-            iou = box_iou(labels[:, 1:], detections[:, :4])
+        seg_results = []
+        for b in range(seg_logits.shape[0]):
+            selected_anchor_points = anchor_points[b, :, seg_mask[b]]
+            selected_strides = strides[b, :, seg_mask[b]]
+            selected_seg = seg_logits[b, :, seg_mask[b]]
+            conf_c = selected_seg[0, :] > self.args.seg_conf_c
+            conf_w = selected_seg[1, :] > self.args.seg_conf_w
+            seg_class = torch.full((1, selected_seg.shape[1]), fill_value=-1, device=selected_seg.device)
 
-        return self.match_predictions(detections[:, 5], labels[:, 0], iou)
+            # If both seg0 and seg1 are above the threshold, seg_class will stay -1 else, it will assign the label to be the one with conf > threshold
+            seg_class[0, (conf_c & ~conf_w) | (~conf_c & conf_w )] = selected_seg.argmax(dim=0)[(conf_c & ~conf_w) | (~conf_c & conf_w)]
+            seg_conf = selected_seg.max(dim=0, keepdim=True).values 
+            combined = torch.cat([
+                selected_anchor_points,
+                selected_strides,
+                seg_class,
+                seg_conf,
+            ], dim=0)
+            combined = combined.transpose(0, 1)
+            seg_results.append(combined)
+        return seg_results
 
-    def plot_val_samples(self, batch, ni):
-        """Plots and saves validation set samples with predicted bounding boxes and keypoints."""
-        plot_images(batch['img'],
-                    batch['batch_idx'],
-                    batch['cls'].squeeze(-1),
-                    batch['bboxes'],
-                    kpts=batch['keypoints'],
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_labels.jpg',
+
+    def plot_predictions(self, batch, predictions, ni):
+        pred_bbox_kpts = predictions[0]
+        pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
+        batch_idx, cls, bboxes = output_to_target(pred_bbox_kpts, max_det=self.args.max_det)
+
+        pred_seg, seg_mask, Pi_list  = predictions[1]
+        seg_results = self.map_anchors_to_seg(seg_logits=pred_seg, seg_mask=seg_mask, Pi_list=Pi_list)
+
+        # plot bbox and kpts
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    bboxes=bboxes,
+                    kpts=pred_kpts,
+                    fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
                     names=self.names,
-                    on_plot=self.on_plot)
-
-
-    def plot_predictions(self, batch, preds, ni):
-        """Plots predictions for YOLO model."""
-        seg_results, anchor_points, strides = preds[1]
-        preds = preds[0]
-        pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in preds], 0)
-
-        batch_idx, cls, bboxes = output_to_target(preds, max_det=self.args.max_det)
+                    on_plot=self.on_plot,
+                    )
 
         # plot seg results
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_seg_pred_res8.jpg',
+                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid8.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
@@ -242,8 +173,7 @@ class PoseSegValidator(DetectionValidator):
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_seg_pred_res16.jpg',
+                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid16.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
@@ -253,100 +183,9 @@ class PoseSegValidator(DetectionValidator):
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_seg_pred_res32.jpg',
+                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid32.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
                     res_grid_size=[32]
                     )
-        
-        # plot bbox and kpts
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    bboxes=bboxes,
-                    kpts=pred_kpts,
-                    paths=batch['im_file'],
-                    fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    )
-
-        # Plot anchors
-        # plot_images(images=batch['img'],
-        #             batch_idx=batch_idx,
-        #             cls=cls,
-        #             paths=batch['im_file'],
-        #             fname=self.save_dir / f'val_batch{ni}_anchors8.jpg',
-        #             names=self.names,
-        #             on_plot=self.on_plot,
-        #             anchor_strides = (anchor_points, strides),
-        #             res_grid_size=[8] # 8, 16, 32
-        #             )
-    
-
-        # plot_images(images=batch['img'],
-        #             batch_idx=batch_idx,
-        #             cls=cls,
-        #             paths=batch['im_file'],
-        #             fname=self.save_dir / f'val_batch{ni}_anchors16.jpg',
-        #             names=self.names,
-        #             on_plot=self.on_plot,
-        #             anchor_strides = (anchor_points, strides),
-        #             res_grid_size=[16]
-        #             )
-        
-        # plot_images(images=batch['img'],
-        #             batch_idx=batch_idx,
-        #             cls=cls,
-        #             paths=batch['im_file'],
-        #             fname=self.save_dir / f'val_batch{ni}_anchors32.jpg',
-        #             names=self.names,
-        #             on_plot=self.on_plot,
-        #             anchor_strides = (anchor_points, strides),
-        #             res_grid_size=[32]
-        #             )
-
-
-    def pred_to_json(self, predn, filename):
-        """Converts YOLO predictions to COCO JSON format."""
-        stem = Path(filename).stem
-        image_id = int(stem) if stem.isnumeric() else stem
-        box = ops.xyxy2xywh(predn[:, :4])  # xywh
-        box[:, :2] -= box[:, 2:] / 2  # xy center to top-left corner
-        for p, b in zip(predn.tolist(), box.tolist()):
-            self.jdict.append({
-                'image_id': image_id,
-                'category_id': self.class_map[int(p[5])],
-                'bbox': [round(x, 3) for x in b],
-                'keypoints': p[6:],
-                'score': round(p[4], 5)})
-
-    def eval_json(self, stats):
-        """Evaluates object detection model using COCO JSON format."""
-        if self.args.save_json and self.is_coco and len(self.jdict):
-            anno_json = self.data['path'] / 'annotations/person_keypoints_val2017.json'  # annotations
-            pred_json = self.save_dir / 'predictions.json'  # predictions
-            LOGGER.info(f'\nEvaluating pycocotools mAP using {pred_json} and {anno_json}...')
-            try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-                check_requirements('pycocotools>=2.0.6')
-                from pycocotools.coco import COCO  # noqa
-                from pycocotools.cocoeval import COCOeval  # noqa
-
-                for x in anno_json, pred_json:
-                    assert x.is_file(), f'{x} file not found'
-                anno = COCO(str(anno_json))  # init annotations api
-                pred = anno.loadRes(str(pred_json))  # init predictions api (must pass string, not Path)
-                for i, eval in enumerate([COCOeval(anno, pred, 'bbox'), COCOeval(anno, pred, 'keypoints')]):
-                    if self.is_coco:
-                        eval.params.imgIds = [int(Path(x).stem) for x in self.dataloader.dataset.im_files]  # im to eval
-                    eval.evaluate()
-                    eval.accumulate()
-                    eval.summarize()
-                    idx = i * 4 + 2
-                    stats[self.metrics.keys[idx + 1]], stats[
-                        self.metrics.keys[idx]] = eval.stats[:2]  # update mAP50-95 and mAP50
-            except Exception as e:
-                LOGGER.warning(f'pycocotools unable to run: {e}')
-        return stats

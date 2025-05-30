@@ -300,7 +300,6 @@ class DetectionModel(BaseModel):
             self.info()
             LOGGER.info('')
 
-
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
         img_size = x.shape[-2:]  # height, width
@@ -372,7 +371,7 @@ class PoseModel(DetectionModel):
 
 
 class PoseSegModel(PoseModel):
-    def __init__(self, cfg='yolov8n-pose.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+    def __init__(self, cfg='yolov8n-pose-seg.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
 
     def init_criterion(self):

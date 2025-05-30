@@ -42,17 +42,17 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=300, # 300 or 1
+        epochs=300,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
-        mosaic=0.0,
+        mosaic=0.0,  # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
         imgsz=768,
         seed=1,
-        batch=128,  # 128
+        batch=128,
         name=experiment_name,
-        device=[0, 1, 2, 3, 4, 5, 6, 7], # [0, 1, 2, 3, 4, 5, 6, 7] for multi-gpu training
-        patience=50, # disable early stopping
+        device=[0, 1, 2, 3, 4, 5, 6, 7],
+        patience=50,
     )
 
     latest_weights_dir = GetLatestWeightsDir()

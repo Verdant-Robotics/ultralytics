@@ -363,7 +363,7 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
     return crop
 
 
-# @threaded
+# @threaded seg_results cause core dumping with threaded option
 def plot_images(images,
                 batch_idx,
                 cls,
@@ -376,7 +376,6 @@ def plot_images(images,
                 on_plot=None,
                 seg_results=None,
                 res_grid_size=[8, 16, 32],
-                anchor_strides=None,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -391,8 +390,6 @@ def plot_images(images,
         kpts = kpts.cpu().numpy()
     if isinstance(batch_idx, torch.Tensor):
         batch_idx = batch_idx.cpu().numpy()
-
-    print("Entering plot_images...: ", fname)
 
     max_size = 1920  # max image size
     max_subplots = 16  # max image subplots, i.e. 4x4
@@ -425,9 +422,9 @@ def plot_images(images,
     annotator = Annotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
     for i in range(i + 1):
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
-        # annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
-        # if paths:
-        #     annotator.text((x + 5, y + 5), text=Path(paths[i]).name[:40], txt_color=(220, 220, 220))  # filenames
+        annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
+        if paths:
+            annotator.text((x + 5, y + 5), text=Path(paths[i]).name[:40], txt_color=(220, 220, 220))
         if len(cls) > 0:
             idx = batch_idx == i
             classes = cls[idx].astype('int')
@@ -449,16 +446,14 @@ def plot_images(images,
                     c = classes[j]
                     color = colors(c)
                     c = names.get(c, c) if names else c
-                    if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                        label = f'{c}' if labels else f'{c} {conf[j]:.1f}'
+                    if labels or conf[j] > 0.25:
                         annotator.box_label(box, color=color)
-            elif len(classes):
+            elif len(classes) and seg_results is None:
                 for c in classes:
                     color = colors(c)
                     c = names.get(c, c) if names else c
-                    # annotator.text((x, y), f'{c}', txt_color=color, box_style=True)
+                    annotator.text((x, y), f'{c}', txt_color=color, box_style=True)
 
-            # Plot keypoints
             if len(kpts):
                 kpts_ = kpts[idx].copy()
                 if len(kpts_):
@@ -482,15 +477,13 @@ def plot_images(images,
                 for cx_orig, cy_orig, seg_class, stride in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides):
                     if stride not in res_grid_size:
                         continue
+                    if seg_class == -1: # to visualize segments that belong to both classes
+                        seg_class = torch.Tensor([5])
+
                     color_id = int(seg_class.item())
                     color = colors(color_id)
-
-                    scale_x = w / original_w
-                    scale_y = h / original_h
-
-                    cx_scaled = cx_orig * scale_x
-                    cy_scaled = cy_orig * scale_y
-
+                    scale_x, scale_y = w / original_w, h / original_h
+                    cx_scaled, cy_scaled = cx_orig * scale_x, cy_orig * scale_y
                     scaled_stride = stride * min(scale_x, scale_y)
                     half_stride = scaled_stride / 2
 
@@ -500,42 +493,7 @@ def plot_images(images,
                     y2 = cy_scaled + half_stride
                     box = [x1 + x, y1 + y, x2 + x, y2 + y]
                     annotator.box_label(box, color=color)
-            
-            # for testing purposes will be removed later
-            if anchor_strides is not None:
-                if i in [5]:
-                     for anchor_idx, (anchor_point, stride_val) in enumerate(zip(anchor_strides[0][i], anchor_strides[1][i])):
-                        if stride_val not in res_grid_size:
-                            continue
 
-                        cx_feat, cy_feat = anchor_point[0].item(), anchor_point[1].item()
-                        stride = stride_val.item()
-                        cx_orig = cx_feat * stride
-                        cy_orig = cy_feat * stride
-
-                        scale_x = w / original_w
-                        scale_y = h / original_h
-                        
-                        cx_scaled = cx_orig * scale_x
-                        cy_scaled = cy_orig * scale_y
-                        
-                        scaled_stride = stride * min(scale_x, scale_y)  # Scale the stride too
-                        half_stride = scaled_stride / 2
-                        
-                        x1 = cx_scaled - half_stride
-                        y1 = cy_scaled - half_stride
-                        x2 = cx_scaled + half_stride
-                        y2 = cy_scaled + half_stride
-
-                        box = [x1 + x, y1 + y, x2 + x, y2 + y]
-                        
-                        r = (37 * anchor_idx) % 255
-                        g = (17 * anchor_idx + 70) % 255
-                        b = (89 * anchor_idx + 140) % 255
-                        color = (r, g, b)
-                        annotator.box_label(box, color=color)
-
-            # Plot masks
             if len(masks):
                 if idx.shape[0] == masks.shape[0]:  # overlap_masks=False
                     image_masks = masks[idx]
@@ -560,7 +518,7 @@ def plot_images(images,
                         with contextlib.suppress(Exception):
                             im[y:y + h, x:x + w, :][mask] = im[y:y + h, x:x + w, :][mask] * 0.4 + np.array(color) * 0.6
                 annotator.fromarray(im)
-    annotator.im.save(fname)  # save
+    annotator.im.save(fname)
     if on_plot:
         on_plot(fname)
 

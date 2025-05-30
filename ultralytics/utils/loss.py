@@ -525,7 +525,6 @@ class v8PoseLoss(v8DetectionLoss):
         return kpts_loss, kpts_obj_loss
 
 
-
 class v8PoseSegLoss(v8PoseLoss):
     def __init__(self, model):
         super().__init__(model)
@@ -659,7 +658,6 @@ class v8PoseSegLoss(v8PoseLoss):
 
         return weighted_loss.mean()
         
-
 
 class v8PoseTunableHeadLoss(v8PoseLoss):
     """Criterion class for computing training losses."""

@@ -9,6 +9,7 @@ runs_directory = os.environ.get("RUNS_DIR", "/training/runs")
 training_task = os.environ.get("TASK", "detect")   # 'detect' for bbox | 'pose' for hybrid model
 experiment_name = os.environ.get("EXP_NAME", None)  # Results will be saved with this name  under runs/<task>/<exp_name>
 
+
 def PrepareDataset(coco_classes_file, dataset_yaml, training_task):
     classes = []
     with open(coco_classes_file, "r") as f:
@@ -46,7 +47,6 @@ def GetModelYaml(task):
         return "yolov8n-pose-tunablehead.yaml"
     elif task == "pose-segmentation":
         return "yolov8n-pose-seg.yaml"
-
     print(f"Unknown task {task}")
     return None
 

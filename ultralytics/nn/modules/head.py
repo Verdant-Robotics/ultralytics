@@ -372,7 +372,6 @@ class Pose(Detect):
         x = self.detect(self, x)
         if self.training:
             return x, kpt
-
         pred_kpt = self.kpts_decode(bs, kpt)
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
 
@@ -439,7 +438,6 @@ class DetectAndSeg(Detect):
 
 
 class PoseSeg(DetectAndSeg):
-    """YOLOv8 Pose head for keypoints models."""
 
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=(), seg_ch_num=1):
         """Initialize YOLO network with default parameters and Convolutional Layers."""
@@ -456,7 +454,7 @@ class PoseSeg(DetectAndSeg):
         Perform forward pass through YOLO model and return predictions.
         During training: Assuming 2 seg ch + 2 nc, self.no = 64 (dfl) + 2 (seg) + 2 (cls) = 68
             x = [P3, P4, P5]
-            Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resoulution(self.stride) [8, 16, 32]
+            Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resolution(self.stride) [8, 16, 32]
         After training: 
             x[0] = (bs, 8=xyxy(bbox),cls0,cls1,seg0,seg1, anchors_len) e.g anchors_len = 8x8 + 4x4 + 2x2 = 84
             x[1] = [P3, P4, P5]
