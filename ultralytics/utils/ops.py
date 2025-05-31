@@ -131,6 +131,7 @@ def make_divisible(x, divisor):
 
 def non_max_suppression(
         prediction,
+        nc,
         conf_thres=0.25,
         iou_thres=0.45,
         classes=None,
@@ -138,7 +139,6 @@ def non_max_suppression(
         multi_label=False,
         labels=(),
         max_det=300,
-        nc=0,  # number of classes (optional)
         max_time_img=0.05,
         max_nms=30000,
         max_wh=7680,
@@ -184,7 +184,6 @@ def non_max_suppression(
     if mps:  # MPS not fully supported yet, convert tensors to CPU before NMS
         prediction = prediction.cpu()
     bs = prediction.shape[0]  # batch size
-    nc = nc or (prediction.shape[1] - 4)  # number of classes
     nm = prediction.shape[1] - nc - 4
     mi = 4 + nc  # mask start index
     xc = prediction[:, 4:mi].amax(1) > conf_thres  # candidates

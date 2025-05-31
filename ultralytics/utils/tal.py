@@ -247,7 +247,7 @@ class TaskAlignedAssigner(nn.Module):
 
 
 def make_anchors(feats, strides, grid_cell_offset=0.5):
-    """Generate anchors from features."""
+    """Generate anchors from features. Relies on feature shape not the content."""
     anchor_points, stride_tensor = [], []
     assert feats is not None
     dtype, device = feats[0].dtype, feats[0].device

@@ -23,7 +23,7 @@ from .conv import (CBAM, ChannelAttention, Concat, Conv, Conv2, ConvTranspose, D
                    GhostConv, LightConv, RepConv, SpatialAttention)
 from .head import (Classify, Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead,
                    Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead,
-                   RTDETRDecoder, Segment)
+                   RTDETRDecoder, Segment, PoseSeg)
 from .transformer import (AIFI, MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer, LayerNorm2d,
                           MLPBlock, MSDeformAttn, TransformerBlock, TransformerEncoderLayer, TransformerLayer)
 
@@ -32,4 +32,4 @@ __all__ = ('Conv', 'Conv2', 'LightConv', 'RepConv', 'DWConv', 'DWConvTranspose2d
            'TransformerBlock', 'MLPBlock', 'LayerNorm2d', 'DFL', 'HGBlock', 'HGStem', 'SPP', 'SPPF', 'C1', 'C2', 'C3',
            'C2f', 'C3x', 'C3TR', 'C3Ghost', 'GhostBottleneck', 'Bottleneck', 'BottleneckCSP', 'Proto', 'Detect', 'DetectContrastive', 
            'DetectMultiClsHeads', 'DetectTunableHead', 'Segment', 'Pose', 'PoseContrastive', 'PoseMultiClsHeads', 'PoseTunableHead', 'Classify', 'TransformerEncoderLayer', 
-           'RepC3', 'RTDETRDecoder', 'AIFI', 'DeformableTransformerDecoder', 'DeformableTransformerDecoderLayer', 'MSDeformAttn', 'MLP')
+           'RepC3', 'RTDETRDecoder', 'AIFI', 'DeformableTransformerDecoder', 'DeformableTransformerDecoderLayer', 'MSDeformAttn', 'MLP', 'PoseSeg')

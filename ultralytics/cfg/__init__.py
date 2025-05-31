@@ -13,10 +13,11 @@ from ultralytics.utils import (ASSETS, DEFAULT_CFG, DEFAULT_CFG_DICT, DEFAULT_CF
 
 # Define valid tasks and modes
 MODES = 'train', 'val', 'predict', 'export', 'track', 'benchmark'
-TASKS = 'detect', 'segment', 'classify', 'pose', 'pose-contrastive', 'pose-multiclsheads', 'pose-tunablehead'
+TASKS = 'detect', 'segment', 'classify', 'pose', 'pose-contrastive', 'pose-multiclsheads', 'pose-tunablehead', 'pose-segmentation'
 TASK2DATA = {'detect': 'coco8.yaml', 'segment': 'coco8-seg.yaml', 'classify': 'imagenet10', 
              'pose': 'coco8-pose.yaml', 'pose-contrastive': 'coco8-pose.yaml', 
-             'pose-multiclsheads': 'coco8-pose.yaml', 'pose-tunablehead': 'coco8-pose.yaml'}
+             'pose-multiclsheads': 'coco8-pose.yaml', 'pose-tunablehead': 'coco8-pose.yaml',
+             'pose-segmentation': 'coco8-pose.yaml'}
 TASK2MODEL = {
     'detect': 'yolov8n.pt',
     'segment': 'yolov8n-seg.pt',
@@ -24,7 +25,8 @@ TASK2MODEL = {
     'pose': 'yolov8n-pose.pt',
     'pose-contrastive': 'yolov8n-pose-contrastive.pt',
     'pose-multiclsheads': 'yolov8n-pose-multiclsheads.pt',
-    'pose-tunablehead': 'yolov8n-pose-tunablehead.pt'}
+    'pose-tunablehead': 'yolov8n-pose-tunablehead.pt',
+    'pose-segmentation': 'yolov8n-pose-seg.pt'}
 TASK2METRIC = {
     'detect': 'metrics/mAP50-95(B)',
     'segment': 'metrics/mAP50-95(M)',
@@ -32,7 +34,8 @@ TASK2METRIC = {
     'pose': 'metrics/mAP50-95(P)',
     'pose-contrastive': 'metrics/mAP50-95(P)',
     'pose-multiclsheads': 'metrics/mAP50-95(P)',
-    'pose-tunablehead': 'metrics/mAP50-95(P)'}
+    'pose-tunablehead': 'metrics/mAP50-95(P)',
+    'pose-segmentation': 'metrics/mAP50-95(P)'}
 
 CLI_HELP_MSG = \
     f"""

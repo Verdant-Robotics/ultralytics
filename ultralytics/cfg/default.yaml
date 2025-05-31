@@ -1,7 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 # Default training settings and hyperparameters for medium-augmentation COCO training
 
-task: detect  # (str) YOLO task, i.e. detect, segment, classify, pose, pose-contrastive, pose-multiclsheads, pose-tunablehead
+task: detect  # (str) YOLO task, i.e. detect, segment, classify, pose, pose-contrastive, pose-multiclsheads, pose-tunablehead, pose-segmentation
 mode: train  # (str) YOLO mode, i.e. train, val, predict, export, track, benchmark
 
 # Train settings -------------------------------------------------------------------------------------------------------
@@ -46,6 +46,7 @@ split: val  # (str) dataset split to use for validation, i.e. 'val', 'test' or '
 save_json: False  # (bool) save results to JSON file
 save_hybrid: False  # (bool) save hybrid version of labels (labels + additional predictions)
 conf:  # (float, optional) object confidence threshold for detection (default 0.25 predict, 0.001 val)
+seg_conf: 0.7  # (float) minimum segmentation confidence threshold for validation
 iou: 0.7  # (float) intersection over union (IoU) threshold for NMS
 max_det: 300  # (int) maximum number of detections per image
 half: False  # (bool) use half precision (FP16)
@@ -92,6 +93,7 @@ warmup_bias_lr: 0.1  # (float) warmup initial bias lr
 box: 7.5  # (float) box loss gain
 cls: 0.5  # (float) cls loss gain (scale with pixels)
 dfl: 1.5  # (float) dfl loss gain
+seg: 1.0 # (float) seg loss gain
 pose: 12.0  # (float) pose loss gain
 kobj: 1.0  # (float) keypoint obj loss gain
 label_smoothing: 0.0  # (float) label smoothing (fraction)

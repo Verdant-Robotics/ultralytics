@@ -11,12 +11,12 @@ from ultralytics.nn.modules import (AIFI, C1, C2, C3, C3TR, SPP, SPPF, Bottlenec
                                     Classify, Concat, Conv, Conv2, ConvTranspose, Detect, DetectContrastive, 
                                     DetectMultiClsHeads, DetectTunableHead, DWConv, DWConvTranspose2d,
                                     Focus, GhostBottleneck, GhostConv, HGBlock, HGStem, Pose, PoseContrastive, 
-                                    PoseMultiClsHeads, PoseTunableHead, RepC3, RepConv, RTDETRDecoder, Segment
+                                    PoseMultiClsHeads, PoseTunableHead, RepC3, RepConv, RTDETRDecoder, Segment, PoseSeg
                                     )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, 
-                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss
+                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss, v8PoseSegLoss
                                     )
 from ultralytics.utils.plotting import feature_visualization
 from ultralytics.utils.torch_utils import (fuse_conv_and_bn, fuse_deconv_and_bn, initialize_weights, intersect_dicts,
@@ -283,11 +283,11 @@ class DetectionModel(BaseModel):
         # Build strides
         m = self.model[-1]  # Detect()
         if isinstance(m, (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment, 
-                          Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead)):
+                          Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead, PoseSeg)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
             forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose, PoseContrastive, PoseMultiClsHeads, 
-                                                                     PoseTunableHead)) else self.forward(x)
+                                                                     PoseTunableHead, PoseSeg)) else self.forward(x)
             m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
             self.stride = m.stride
             m.bias_init()  # only run once
@@ -368,6 +368,15 @@ class PoseModel(DetectionModel):
     def init_criterion(self):
         """Initialize the loss criterion for the PoseModel."""
         return v8PoseLoss(self)
+
+
+class PoseSegModel(PoseModel):
+    def __init__(self, cfg='yolov8n-pose-seg.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
+        super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
+        self.seg_ch_num = self.yaml.get('seg_ch_num')
+
+    def init_criterion(self):
+        return v8PoseSegLoss(self)
 
 
 class PoseTunableHeadModel(PoseModel):
@@ -882,7 +891,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
         elif m in (Detect, DetectContrastive, DetectMultiClsHeads, DetectTunableHead, Segment, 
-                   Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead):
+                   Pose, PoseContrastive, PoseMultiClsHeads, PoseTunableHead, PoseSeg):
             args.append([ch[x] for x in f])
             if m is Segment:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
@@ -973,6 +982,8 @@ def guess_model_task(model):
             return 'pose-multiclsheads'
         if m == 'posetunablehead':
             return 'pose-tunablehead'
+        if m == 'poseseg':
+            return 'pose-segmentation'
 
     # Guess from model cfg
     if isinstance(model, dict):

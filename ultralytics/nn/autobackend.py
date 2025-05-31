@@ -115,6 +115,8 @@ class AutoBackend(nn.Module):
             model = model.fuse(verbose=verbose) if fuse else model
             if hasattr(model, 'kpt_shape'):
                 kpt_shape = model.kpt_shape  # pose-only
+            if hasattr(model, 'seg_ch_num'):
+                seg_ch_num = model.seg_ch_num  # pose-seg only
             stride = max(int(model.stride.max()), 32)  # model stride
             names = model.module.names if hasattr(model, 'module') else model.names  # get class names
             model.half() if fp16 else model.float()
@@ -128,6 +130,8 @@ class AutoBackend(nn.Module):
                                          fuse=fuse)
             if hasattr(model, 'kpt_shape'):
                 kpt_shape = model.kpt_shape  # pose-only
+            if hasattr(model, 'seg_ch_num'):
+                seg_ch_num = model.seg_ch_num  # pose-seg only
             stride = max(int(model.stride.max()), 32)  # model stride
             names = model.module.names if hasattr(model, 'module') else model.names  # get class names
             model.half() if fp16 else model.float()
@@ -300,7 +304,7 @@ class AutoBackend(nn.Module):
             metadata = yaml_load(metadata)
         if metadata:
             for k, v in metadata.items():
-                if k in ('stride', 'batch'):
+                if k in ('stride', 'batch', 'seg_ch_num'):
                     metadata[k] = int(v)
                 elif k in ('imgsz', 'names', 'kpt_shape') and isinstance(v, str):
                     metadata[k] = eval(v)
@@ -310,6 +314,7 @@ class AutoBackend(nn.Module):
             imgsz = metadata['imgsz']
             names = metadata['names']
             kpt_shape = metadata.get('kpt_shape')
+            seg_ch_num = metadata.get('seg_ch_num')  # pose-seg only
         elif not (pt or triton or nn_module):
             LOGGER.warning(f"WARNING ⚠️ Metadata not found for 'model={weights}'")
 
