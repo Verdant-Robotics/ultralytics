@@ -131,6 +131,7 @@ class PoseSegValidator(PoseValidator):
         anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A) 
 
         seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
+        # seg_mask = (seg_logits > 0).any(dim=1)
         seg_results = []
         for b in range(bs):
             selected_anchor_points = anchor_points[b, :, seg_mask[b]]
@@ -140,12 +141,13 @@ class PoseSegValidator(PoseValidator):
             single_confident = (conf_flags.sum(dim=0) == 1) # Only one seg class is confident for this anchor point. If more are confident, class will be -1
             seg_class = torch.full((1, selected_seg.shape[1]), fill_value=-1, device=selected_seg.device)
             seg_class[0, single_confident] = selected_seg.argmax(dim=0)[single_confident]
-            seg_conf = selected_seg.max(dim=0, keepdim=True).values 
+            seg_conf = selected_seg.max(dim=0, keepdim=True).values
             combined = torch.cat([
-                selected_anchor_points,
-                selected_strides,
-                seg_class,
-                seg_conf,
+                selected_anchor_points, # 2
+                selected_strides, # 1
+                seg_class, # 1
+                seg_conf, # 1
+                selected_seg, # CC: 2
             ], dim=0)
             combined = combined.transpose(0, 1)
             seg_results.append(combined)
@@ -161,15 +163,15 @@ class PoseSegValidator(PoseValidator):
         seg_results = self.map_anchors_to_seg(seg_logits=pred_seg, Pi_list=Pi_list)
 
         # plot bbox and kpts
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    bboxes=bboxes,
-                    kpts=pred_kpts,
-                    fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    )
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             bboxes=bboxes,
+        #             kpts=pred_kpts,
+        #             fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             )
 
         # plot seg results
         plot_images(images=batch['img'],
@@ -182,22 +184,22 @@ class PoseSegValidator(PoseValidator):
                     res_grid_size=[8]
                     )
         
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid16.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    seg_results=seg_results,
-                    res_grid_size=[16]
-                    )
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             fname=self.save_dir / f'val_batch{ni}_pred_seg_grid16.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             seg_results=seg_results,
+        #             res_grid_size=[16]
+        #             )
 
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid32.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    seg_results=seg_results,
-                    res_grid_size=[32]
-                    )
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             fname=self.save_dir / f'val_batch{ni}_pred_seg_grid32.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             seg_results=seg_results,
+        #             res_grid_size=[32]
+        #             )

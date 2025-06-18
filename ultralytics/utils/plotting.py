@@ -100,30 +100,80 @@ class Annotator:
         self.limb_color = colors.pose_palette[[9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16]]
         self.kpt_color = colors.pose_palette[[16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9]]
 
-    def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
-        """Add one xyxy box to image with label."""
+
+    def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255), alpha=255):
+        """Add one xyxy box to image with label and optional transparency."""
         if isinstance(box, torch.Tensor):
             box = box.tolist()
         if self.pil or not is_ascii(label):
-            self.draw.rectangle(box, width=self.lw, outline=color)  # box
+            # Handle transparent filled boxes with PIL
+            if alpha < 255:
+                # Create overlay for transparent fill
+                overlay = Image.new('RGBA', self.im.size, (0, 0, 0, 0))
+                overlay_draw = ImageDraw.Draw(overlay)
+                overlay_draw.rectangle(box, fill=(*color[:3], alpha))
+                
+                # Convert to RGBA if needed and blend
+                if self.im.mode != 'RGBA':
+                    self.im = self.im.convert('RGBA')
+                self.im = Image.alpha_composite(self.im, overlay)
+                self.draw = ImageDraw.Draw(self.im)
+                
+
             if label:
                 w, h = self.font.getsize(label)  # text width, height
                 outside = box[1] - h >= 0  # label fits outside box
-                self.draw.rectangle(
-                    (box[0], box[1] - h if outside else box[1], box[0] + w + 1,
-                     box[1] + 1 if outside else box[1] + h + 1),
-                    fill=color,
-                )
-                # self.draw.text((box[0], box[1]), label, fill=txt_color, font=self.font, anchor='ls')  # for PIL>8.0
+                label_box = (box[0], box[1] - h if outside else box[1], box[0] + w + 1,
+                            box[1] + 1 if outside else box[1] + h + 1)
+                
+                if alpha < 255:
+                    # Transparent label background
+                    overlay = Image.new('RGBA', self.im.size, (0, 0, 0, 0))
+                    overlay_draw = ImageDraw.Draw(overlay)
+                    overlay_draw.rectangle(label_box, fill=(*color[:3], alpha))
+                    
+                    if self.im.mode != 'RGBA':
+                        self.im = self.im.convert('RGBA')
+                    self.im = Image.alpha_composite(self.im, overlay)
+                    self.draw = ImageDraw.Draw(self.im)
+                else:
+                    # Opaque label background
+                    self.draw.rectangle(label_box, fill=color)
+                
                 self.draw.text((box[0], box[1] - h if outside else box[1]), label, fill=txt_color, font=self.font)
         else:  # cv2
             p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
-            cv2.rectangle(self.im, p1, p2, color, thickness=self.lw, lineType=cv2.LINE_AA)
+            
+            if alpha < 255:
+                # Create overlay for transparent fill
+                overlay = self.im.copy()
+                cv2.rectangle(overlay, p1, p2, color, -1, cv2.LINE_AA)
+                
+                # Blend with original image
+                alpha_weight = alpha / 255.0
+                cv2.addWeighted(overlay, alpha_weight, self.im, 1 - alpha_weight, 0, self.im)
+                
+                # Draw box outline
+                cv2.rectangle(self.im, p1, p2, color, thickness=self.lw, lineType=cv2.LINE_AA)
+            else:
+                # Original behavior - outline only
+                cv2.rectangle(self.im, p1, p2, color, thickness=self.lw, lineType=cv2.LINE_AA)
+            
             if label:
                 w, h = cv2.getTextSize(label, 0, fontScale=self.sf, thickness=self.tf)[0]  # text width, height
                 outside = p1[1] - h >= 3
-                p2 = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
-                cv2.rectangle(self.im, p1, p2, color, -1, cv2.LINE_AA)  # filled
+                p2_label = p1[0] + w, p1[1] - h - 3 if outside else p1[1] + h + 3
+                
+                if alpha < 255:
+                    # Transparent label background
+                    overlay = self.im.copy()
+                    cv2.rectangle(overlay, p1, p2_label, color, -1, cv2.LINE_AA)
+                    alpha_weight = alpha / 255.0
+                    cv2.addWeighted(overlay, alpha_weight, self.im, 1 - alpha_weight, 0, self.im)
+                else:
+                    # Opaque label background
+                    cv2.rectangle(self.im, p1, p2_label, color, -1, cv2.LINE_AA)
+                
                 cv2.putText(self.im,
                             label, (p1[0], p1[1] - 2 if outside else p1[1] + h + 2),
                             0,
@@ -473,6 +523,9 @@ def plot_images(images,
                 seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2))
                 strides = image_segs[:, 2].unsqueeze(1)
                 seg_class = image_segs[:, 3].unsqueeze(1)
+                seg_logits = image_segs[:, 5:7]
+
+                # breakpoint()
 
                 for cx_orig, cy_orig, seg_class, stride in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides):
                     if stride not in res_grid_size:
@@ -492,7 +545,7 @@ def plot_images(images,
                     x2 = cx_scaled + half_stride
                     y2 = cy_scaled + half_stride
                     box = [x1 + x, y1 + y, x2 + x, y2 + y]
-                    annotator.box_label(box, color=color)
+                    annotator.box_label(box, color=color, alpha=50)
 
             if len(masks):
                 if idx.shape[0] == masks.shape[0]:  # overlap_masks=False
@@ -518,7 +571,23 @@ def plot_images(images,
                         with contextlib.suppress(Exception):
                             im[y:y + h, x:x + w, :][mask] = im[y:y + h, x:x + w, :][mask] * 0.4 + np.array(color) * 0.6
                 annotator.fromarray(im)
-    annotator.im.save(fname)
+    
+
+    im = annotator.im.convert("RGB")
+    # im.save(fname)
+    # annotator.im.save(fname)
+    # im = annotator.im
+    # if im.mode == 'RGBA':
+    #     fname = fname.replace('.jpg', '.png').replace('.jpeg', '.png')
+    
+    fname = Path(fname)
+    if im.mode == 'RGBA':
+        fname_str = str(fname)
+        fname_str = fname_str.replace('.jpg', '.png').replace('.jpeg', '.png')
+        fname = Path(fname_str)
+
+    im.save(fname)
+    
     if on_plot:
         on_plot(fname)
 
