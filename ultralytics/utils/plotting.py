@@ -4,6 +4,7 @@ import contextlib
 import math
 import warnings
 from pathlib import Path
+import torch.nn.functional as F
 
 import cv2
 import matplotlib.pyplot as plt
@@ -116,6 +117,7 @@ class Annotator:
                 # Convert to RGBA if needed and blend
                 if self.im.mode != 'RGBA':
                     self.im = self.im.convert('RGBA')
+
                 self.im = Image.alpha_composite(self.im, overlay)
                 self.draw = ImageDraw.Draw(self.im)
                 
@@ -413,6 +415,32 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
     return crop
 
 
+def blend_colors(color1, alpha1, color2, alpha2):
+    if alpha1 + alpha2 == 0:
+        # Both alphas are zero, return a fully transparent color
+        return (0, 0, 0), 0
+    blended_color = tuple(
+        int((c1 * alpha1 + c2 * alpha2) / (alpha1 + alpha2))
+        for c1, c2 in zip(color1, color2)
+    )
+    blended_alpha = min(255, alpha1 + alpha2)  # Ensure alpha doesn't exceed 255
+    return blended_color, blended_alpha
+
+
+def get_rainbow_color(index, total):
+    # Define a list of rainbow colors
+    rainbow_colors = [
+        (148, 0, 211),  # Violet
+        (75, 0, 130),   # Indigo
+        (0, 0, 255),    # Blue
+        (0, 255, 0),    # Green
+        (255, 255, 0),  # Yellow
+        (255, 127, 0),  # Orange
+        (255, 0, 0)     # Red
+    ]
+    # Cycle through the colors based on the index
+    return rainbow_colors[index % len(rainbow_colors)]
+
 # @threaded seg_results cause core dumping with threaded option
 def plot_images(images,
                 batch_idx,
@@ -426,6 +454,9 @@ def plot_images(images,
                 on_plot=None,
                 seg_results=None,
                 res_grid_size=[8, 16, 32],
+                anchor_bbox_confs=None,
+                orig_anchor_points=None,
+                strides=None,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -498,7 +529,7 @@ def plot_images(images,
                     c = names.get(c, c) if names else c
                     if labels or conf[j] > 0.25:
                         annotator.box_label(box, color=color)
-            elif len(classes) and seg_results is None:
+            elif len(classes) and seg_results is None and anchor_bbox_confs is None:
                 for c in classes:
                     color = colors(c)
                     c = names.get(c, c) if names else c
@@ -518,34 +549,114 @@ def plot_images(images,
                     if labels or conf[j] > 0.25:  # 0.25 conf thresh
                         annotator.kpts(kpts_[j])
 
-            if seg_results is not None:
-                image_segs = seg_results[i]
-                seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2))
-                strides = image_segs[:, 2].unsqueeze(1)
-                seg_class = image_segs[:, 3].unsqueeze(1)
-                seg_logits = image_segs[:, 5:7]
+            if anchor_bbox_confs is not None:
+                overlay = Image.new('RGBA', annotator.im.size, (0, 0, 0, 0))
+                overlay_draw = ImageDraw.Draw(overlay)
+
+                anchor_bbox_conf = anchor_bbox_confs[i]
+
+                min_conf = anchor_bbox_conf.min()
+                max_conf = anchor_bbox_conf.max()
+                anchor_points = orig_anchor_points * strides # (2, A), (1, A)
 
                 # breakpoint()
 
-                for cx_orig, cy_orig, seg_class, stride in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides):
-                    if stride not in res_grid_size:
-                        continue
-                    if seg_class == -1: # to visualize segments that belong to all classes
-                        seg_class = torch.Tensor([5])
+                for anchor_idx in range(anchor_bbox_conf.shape[0]):
+                    stride = strides[0, anchor_idx]
+                    if stride not in res_grid_size: continue
 
-                    color_id = int(seg_class.item())
-                    color = colors(color_id)
+                    # if i % 2 == 0: continue
+
+                    
+                    anchor_conf_class0 = anchor_bbox_conf[anchor_idx, 0]  # class 0 confidence
+                    anchor_conf_class1 = anchor_bbox_conf[anchor_idx, 1]  # class 1 confidence
+                    alpha0 = int(((anchor_conf_class0 - min_conf) / (max_conf - min_conf)) * 255)
+                    alpha1 = int(((anchor_conf_class1 - min_conf) / (max_conf - min_conf)) * 255)
+                    
+
                     scale_x, scale_y = w / original_w, h / original_h
+
+                    cx_orig, cy_orig = anchor_points[0, anchor_idx], anchor_points[1, anchor_idx]
                     cx_scaled, cy_scaled = cx_orig * scale_x, cy_orig * scale_y
                     scaled_stride = stride * min(scale_x, scale_y)
                     half_stride = scaled_stride / 2
-
                     x1 = cx_scaled - half_stride
                     y1 = cy_scaled - half_stride
                     x2 = cx_scaled + half_stride
                     y2 = cy_scaled + half_stride
                     box = [x1 + x, y1 + y, x2 + x, y2 + y]
-                    annotator.box_label(box, color=color, alpha=50)
+
+                    blended_color, blended_alpha = blend_colors(colors(0)[:3], alpha0, colors(1)[:3], alpha1)
+                    # blended_color = get_rainbow_color(anchor_idx, anchor_bbox_conf.shape[0])
+                    # blended_alpha = 100
+                    overlay_draw.rectangle(box, fill=(*blended_color, blended_alpha))
+
+                
+                if annotator.im.mode != 'RGBA':
+                    annotator.im = annotator.im.convert('RGBA')
+                annotator.im = Image.alpha_composite(annotator.im, overlay)
+                annotator.draw = ImageDraw.Draw(annotator.im) 
+            
+
+            if seg_results is not None:
+                image_segs = seg_results[i]
+                seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2))
+                strides = image_segs[:, 2].unsqueeze(1)
+                seg_class = image_segs[:, 3].unsqueeze(1)
+                seg_logits = image_segs[:, 5:7] # (A, 2)
+
+                # breakpoint()
+
+                seg_probs = F.softmax(seg_logits, dim=0) # because we are comparing anchors not classes
+
+                overlay = Image.new('RGBA', annotator.im.size, (0, 0, 0, 0))
+                overlay_draw = ImageDraw.Draw(overlay)
+
+                for cx_orig, cy_orig, seg_class, stride, seg_prob in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], seg_class, strides, seg_probs):
+                    if stride not in res_grid_size:
+                        continue
+
+                    min_prob0 = seg_probs[:, 0].min() # alpha = 0
+                    max_prob0 = seg_probs[:, 0].max() # alpha = 255
+
+                    min_prob1 = seg_probs[:, 1].min() # alpha = 0
+                    max_prob1 = seg_probs[:, 1].max() # alpha = 255
+
+
+                    # only for class 0:
+                    prob0 = seg_prob[0].item()  # probability of class 0
+                    alpha0 = int(((prob0 - min_prob0) / (max_prob0 - min_prob0)) * 255)
+
+                    # only for class 1:
+                    prob1 = seg_prob[1].item()  # probability of class 1
+                    alpha1 = int(((prob1 - min_prob1) / (max_prob1 - min_prob1)) * 255)
+
+
+                    scale_x, scale_y = w / original_w, h / original_h
+                    cx_scaled, cy_scaled = cx_orig * scale_x, cy_orig * scale_y
+                    scaled_stride = stride * min(scale_x, scale_y)
+                    half_stride = scaled_stride / 2
+                    x1 = cx_scaled - half_stride
+                    y1 = cy_scaled - half_stride
+                    x2 = cx_scaled + half_stride
+                    y2 = cy_scaled + half_stride
+
+                    box = [x1 + x, y1 + y, x2 + x, y2 + y]
+
+
+                    # overlay_draw.rectangle(box, fill=(*colors(0)[:3], alpha0))
+                    # overlay_draw.rectangle(box, fill=(*colors(1)[:3], alpha1))
+
+                    blended_color, blended_alpha = blend_colors(colors(0)[:3], alpha0, colors(1)[:3], alpha1)
+                    overlay_draw.rectangle(box, fill=(*blended_color, blended_alpha))
+
+                    # annotator.box_label(box, color=colors(0), alpha=alpha0)
+                    # annotator.box_label(box, color=colors(1), alpha=alpha1)
+                
+                if annotator.im.mode != 'RGBA':
+                    annotator.im = annotator.im.convert('RGBA')
+                annotator.im = Image.alpha_composite(annotator.im, overlay)
+                annotator.draw = ImageDraw.Draw(annotator.im)
 
             if len(masks):
                 if idx.shape[0] == masks.shape[0]:  # overlap_masks=False
@@ -573,7 +684,9 @@ def plot_images(images,
                 annotator.fromarray(im)
     
 
-    im = annotator.im.convert("RGB")
+    # im = annotator.im.convert("RGB")
+
+    im = annotator.im
     # im.save(fname)
     # annotator.im.save(fname)
     # im = annotator.im

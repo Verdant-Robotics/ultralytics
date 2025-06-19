@@ -130,8 +130,8 @@ class PoseSegValidator(PoseValidator):
         strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1, A)
         anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A) 
 
-        seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
-        # seg_mask = (seg_logits > 0).any(dim=1)
+        # seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
+        seg_mask = (seg_logits > 0).any(dim=1)
         seg_results = []
         for b in range(bs):
             selected_anchor_points = anchor_points[b, :, seg_mask[b]]
@@ -154,6 +154,59 @@ class PoseSegValidator(PoseValidator):
         return seg_results
 
 
+    def map_anchors_to_bboxes(self, seg_logits, Pi_list, bboxes, batch_idx, classes):
+        stride_tensor = self.model.stride
+        if type(stride_tensor) is int: # When models are loaded, model.stride is the max stride
+            max_stride = stride_tensor
+            stride_tensor = torch.tensor([max_stride/4, max_stride/2, max_stride])
+        anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, stride_tensor, 0.5))
+        
+        image_anchors_cxy = anchor_points * strides # (2, A)
+        half_strides = strides / 2
+
+        ax1 = image_anchors_cxy[0, :] - half_strides
+        ay1 = image_anchors_cxy[1, :] - half_strides
+        ax2 = image_anchors_cxy[0, :] + half_strides
+        ay2 = image_anchors_cxy[1, :] + half_strides
+
+        # anchor_points (2, A)
+        # strides (1, A)
+
+        bs = Pi_list[0].shape[0]
+        num_anchors = anchor_points.shape[1]
+        anchor_bbox_conf = torch.zeros((bs, num_anchors, 2), dtype=torch.float32)
+
+        
+
+        for b in range(bs):
+            bbox_idx = batch_idx == b
+            selected_bboxes = bboxes[bbox_idx] # xywh
+            classes_in_batch = classes[bbox_idx]
+
+            for i, bbox in enumerate(selected_bboxes):
+                
+                # bbox = bbox[i]
+
+                bbox_xyxy = ops.xywh2xyxy(bbox[:4])
+
+                bbox_x1 = bbox_xyxy[0]
+                bbox_y1 = bbox_xyxy[1]
+                bbox_x2 = bbox_xyxy[2]
+                bbox_y2 = bbox_xyxy[3]
+
+                intersection_in_batch = ((ax1 <= bbox_x2) & (bbox_x1 <= ax2) & (ay1 <= bbox_y2) & (bbox_y1 <= ay2))
+                class_idx = int(classes_in_batch[i])
+
+                anchor_indices = intersection_in_batch.nonzero(as_tuple=True)[1]
+                current_conf = anchor_bbox_conf[b, anchor_indices, class_idx]
+
+                bbox_conf = torch.tensor([bbox[4]])
+                anchor_bbox_conf[b, anchor_indices, class_idx] = torch.max(bbox_conf, current_conf)
+                # anchor_bbox_conf[intersection_in_batch][classes_in_batch[i]] = max(bbox[4], anchor_bbox_conf[intersection_in_batch])
+        
+        return anchor_bbox_conf, anchor_points, strides
+
+
     def plot_predictions(self, batch, predictions, ni):
         pred_bbox_kpts = predictions[0]
         pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
@@ -162,25 +215,45 @@ class PoseSegValidator(PoseValidator):
         pred_seg, Pi_list  = predictions[1]
         seg_results = self.map_anchors_to_seg(seg_logits=pred_seg, Pi_list=Pi_list)
 
+        anchor_bbox_confs, anchor_points, strides = self.map_anchors_to_bboxes(seg_logits=pred_seg, Pi_list=Pi_list, bboxes=bboxes, batch_idx=batch_idx, classes=cls)
+
+        
+
         # plot bbox and kpts
+        plot_images(images=batch['img'],
+                    batch_idx=batch_idx,
+                    cls=cls,
+                    bboxes=bboxes,
+                    kpts=pred_kpts,
+                    fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
+                    names=self.names,
+                    on_plot=self.on_plot,
+                    )
+
+        # plot seg results
         # plot_images(images=batch['img'],
         #             batch_idx=batch_idx,
         #             cls=cls,
-        #             bboxes=bboxes,
-        #             kpts=pred_kpts,
-        #             fname=self.save_dir / f'val_batch{ni}_pred_bbox_kpt.jpg',
+        #             fname=self.save_dir / f'val_batch{ni}_pred_seg_grid8.jpg',
         #             names=self.names,
         #             on_plot=self.on_plot,
+        #             seg_results=seg_results,
+        #             # anchor_bbox_conf=anchor_bbox_conf,
+        #             # anchor_points=anchor_points,
+        #             # strides=strides,
+        #             res_grid_size=[8]
         #             )
-
-        # plot seg results
+        
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
                     fname=self.save_dir / f'val_batch{ni}_pred_seg_grid8.jpg',
                     names=self.names,
                     on_plot=self.on_plot,
-                    seg_results=seg_results,
+                    # seg_results=seg_results,
+                    anchor_bbox_confs=anchor_bbox_confs,
+                    orig_anchor_points=anchor_points,
+                    strides=strides,
                     res_grid_size=[8]
                     )
         
