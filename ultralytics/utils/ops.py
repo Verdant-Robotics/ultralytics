@@ -173,7 +173,8 @@ def non_max_suppression(
             (x1, y1, x2, y2, confidence, class, mask1, mask2, ...).
     """
 
-    conf_thres = 0
+    # conf_thres = 0
+    # iou_thres = 1
     # Checks
     assert 0 <= conf_thres <= 1, f'Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0'
     assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'

@@ -198,10 +198,14 @@ class PoseSegValidator(PoseValidator):
                 class_idx = int(classes_in_batch[i])
 
                 anchor_indices = intersection_in_batch.nonzero(as_tuple=True)[1]
+
+                device = anchor_bbox_conf.device 
+                anchor_indices = anchor_indices.to(device)
+                
                 current_conf = anchor_bbox_conf[b, anchor_indices, class_idx]
 
                 bbox_conf = torch.tensor([bbox[4]])
-                anchor_bbox_conf[b, anchor_indices, class_idx] = torch.max(bbox_conf, current_conf)
+                anchor_bbox_conf[b, anchor_indices, class_idx] = torch.max(torch.Tensor([1]), bbox_conf + current_conf)
                 # anchor_bbox_conf[intersection_in_batch][classes_in_batch[i]] = max(bbox[4], anchor_bbox_conf[intersection_in_batch])
         
         return anchor_bbox_conf, anchor_points, strides

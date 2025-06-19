@@ -555,8 +555,8 @@ def plot_images(images,
 
                 anchor_bbox_conf = anchor_bbox_confs[i]
 
-                min_conf = anchor_bbox_conf.min()
-                max_conf = anchor_bbox_conf.max()
+                min_conf = anchor_bbox_confs.min()
+                max_conf = anchor_bbox_confs.max()
                 anchor_points = orig_anchor_points * strides # (2, A), (1, A)
 
                 # breakpoint()
