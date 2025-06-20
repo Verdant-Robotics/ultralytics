@@ -33,7 +33,7 @@ class Colors:
 
     def __init__(self):
         """Initialize colors as hex = matplotlib.colors.TABLEAU_COLORS.values()."""
-        hexs = ('FF3838', 'FF9D97', 'FF701F', 'FFB21D', 'CFD231', '48F90A', '92CC17', '3DDB86', '1A9334', '00D4BB',
+        hexs = ('FF0000', '008000', 'FF3838', 'FFB21D', 'CFD231', '48F90A', '92CC17', '3DDB86', '1A9334', '00D4BB',
                 '2C99A8', '00C2FF', '344593', '6473FF', '0018EC', '8438FF', '520085', 'CB38FF', 'FF95C8', 'FF37C7')
         self.palette = [self.hex2rgb(f'#{c}') for c in hexs]
         self.n = len(self.palette)
@@ -100,7 +100,6 @@ class Annotator:
         self.limb_color = colors.pose_palette[[9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16]]
         self.kpt_color = colors.pose_palette[[16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9]]
 
-
     def box_label(self, box, label='', color=(128, 128, 128), txt_color=(255, 255, 255)):
         """Add one xyxy box to image with label."""
         if isinstance(box, torch.Tensor):
@@ -132,7 +131,6 @@ class Annotator:
                             txt_color,
                             thickness=self.tf,
                             lineType=cv2.LINE_AA)
-
 
     def masks(self, masks, colors, im_gpu, alpha=0.5, retina_masks=False):
         """
@@ -365,28 +363,15 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
     return crop
 
 
-def blend_colors(color1, alpha1, color2, alpha2):
-    if alpha1 + alpha2 == 0:
-        return (0, 0, 0), 0
-    blended_color = tuple(
-        int((c1 * alpha1 + c2 * alpha2) / (alpha1 + alpha2))
-        for c1, c2 in zip(color1, color2)
-    )
-    blended_alpha = min(255, alpha1 + alpha2)  # Ensure alpha doesn't exceed 255
-    return blended_color, blended_alpha
-
-
-def blend_colors_based_on_prob_for_seg(seg_prob, seg_color):
-    alphas = 50 + seg_prob * 200 #  map seg_prob to be between 50 - 100
+def blend_colors_based_on_prob_for_seg(seg_prob):
+    alphas = 50 + seg_prob * 150    # Map 0<=seg_prob<=1 to be between 50 - 150
     total_alpha = torch.sum(alphas)
     if total_alpha == 0:
         return (0, 0, 0), 0
-    
     blended_rgb = [0.0, 0.0, 0.0]
-    for i in range(len(seg_color)):
-        for j in range(3):  # R, G, B
-            blended_rgb[j] += seg_color[i][j] * alphas[i].item()
-
+    for class_id in range(len(seg_prob)):
+        for j in range(3):
+            blended_rgb[j] += colors(class_id)[j] * alphas[class_id].item()
     blended_rgb = tuple(int(c / total_alpha) for c in blended_rgb)
     blended_alpha = min(255, int(total_alpha.item()))
     return blended_rgb, blended_alpha
@@ -405,6 +390,7 @@ def plot_images(images,
                 on_plot=None,
                 seg_results=None,
                 res_grid_size=[8, 16, 32],
+                enable_hightlight=False,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -446,9 +432,12 @@ def plot_images(images,
         w = math.ceil(scale * w)
         mosaic = cv2.resize(mosaic, tuple(int(x * ns) for x in (w, h)))
 
-    # Annotate
     fs = int((h + w) * ns * 0.01)  # font size
     annotator = Annotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
+    if enable_hightlight:
+        assert len(bboxes) == 0 # highlight code doesn't work with bboxes visualization for unknown reasons
+        annotator.im = annotator.im.convert('RGBA')
+
     for i in range(i + 1):
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
@@ -495,21 +484,18 @@ def plot_images(images,
                 kpts_[..., 1] += y
                 for j in range(len(kpts_)):
                     if labels or conf[j] > 0.25:  # 0.25 conf thresh
-                        annotator.kpts(kpts_[j])            
+                        annotator.kpts(kpts_[j])
 
-            if seg_results is not None and len(seg_results[i]) != 0:
+            if seg_results is not None and len(seg_results) > 0:
                 image_segs = seg_results[i]
                 seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2))
                 strides = image_segs[:, 2].unsqueeze(1)
                 seg_probs = image_segs[:, 3:]
-                seg_color = [colors(sc) for sc in range(seg_probs.shape[1])]
-                print(seg_color)
                 overlay = Image.new('RGBA', annotator.im.size, (0, 0, 0, 0)) # to create highlights
                 overlay_draw = ImageDraw.Draw(overlay)
                 for cx_orig, cy_orig, stride, seg_prob in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], strides, seg_probs):
                     if stride not in res_grid_size:
                         continue
-
                     scale_x, scale_y = w / original_w, h / original_h
                     cx_scaled, cy_scaled = cx_orig * scale_x, cy_orig * scale_y
                     scaled_stride = stride * min(scale_x, scale_y)
@@ -518,14 +504,9 @@ def plot_images(images,
                     y1 = cy_scaled - half_stride
                     x2 = cx_scaled + half_stride
                     y2 = cy_scaled + half_stride
-
                     box = [x1 + x, y1 + y, x2 + x, y2 + y]
-
-                    blended_color, blended_alpha = blend_colors_based_on_prob_for_seg(seg_prob, seg_color)
+                    blended_color, blended_alpha = blend_colors_based_on_prob_for_seg(seg_prob)
                     overlay_draw.rectangle(box, fill=(*blended_color, blended_alpha))
-
-                if annotator.im.mode != 'RGBA':
-                    annotator.im = annotator.im.convert('RGBA')
                 annotator.im = Image.alpha_composite(annotator.im, overlay)
                 annotator.draw = ImageDraw.Draw(annotator.im)
 
@@ -553,15 +534,12 @@ def plot_images(images,
                         with contextlib.suppress(Exception):
                             im[y:y + h, x:x + w, :][mask] = im[y:y + h, x:x + w, :][mask] * 0.4 + np.array(color) * 0.6
                 annotator.fromarray(im)
-    
 
-    im = annotator.im
-    fname = Path(fname)
-    if im.mode == 'RGBA':
+    if annotator.im.mode == 'RGBA':
         fname_str = str(fname)
         fname_str = fname_str.replace('.jpg', '.png').replace('.jpeg', '.png')
         fname = Path(fname_str)
-    im.save(fname)
+    annotator.im.save(fname)
     if on_plot:
         on_plot(fname)
 

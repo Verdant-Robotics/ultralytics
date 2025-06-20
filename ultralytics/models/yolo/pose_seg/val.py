@@ -128,17 +128,23 @@ class PoseSegValidator(PoseValidator):
         anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, stride_tensor, 0.5))
         bs = Pi_list[0].shape[0]
         strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1, A)
-        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A) 
+        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A)
         seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
-        all_seg_probs =  F.softmax(seg_logits, dim=2) # (B, seg_ch_num, A)
+
+        all_seg_probs =  F.softmax(seg_logits, dim=2)
+        # Normalize seg probs within the seg mask
+        seg_mask_expanded = seg_mask.unsqueeze(1).expand(-1, all_seg_probs.size(1), -1)
+        masked_probs = all_seg_probs[seg_mask_expanded]
+        if len(masked_probs) == 0:
+            return []
+        min_prob, max_prob = masked_probs.min(), masked_probs.max()
+        scaled_probs = (all_seg_probs - min_prob) / max_prob - min_prob  # This will then later be used to map to intesity range when visualized
 
         seg_results = []
         for b in range(bs):
-            if len(seg_logits[b]) == 0:
-                continue
             selected_anchor_points = anchor_points[b, :, seg_mask[b]]
             selected_strides = strides[b, :, seg_mask[b]]
-            seg_probs = all_seg_probs[b, :, seg_mask[b]]
+            seg_probs = scaled_probs[b, :, seg_mask[b]]
             combined = torch.cat([
                 selected_anchor_points,
                 selected_strides,
@@ -146,7 +152,6 @@ class PoseSegValidator(PoseValidator):
             ], dim=0)
             combined = combined.transpose(0, 1)
             seg_results.append(combined)
-        
         return seg_results
 
 
@@ -177,5 +182,6 @@ class PoseSegValidator(PoseValidator):
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
-                    res_grid_size=[8]
+                    res_grid_size=[8],
+                    enable_hightlight=True
                     )
