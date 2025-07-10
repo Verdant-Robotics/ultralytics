@@ -364,7 +364,7 @@ def save_one_box(xyxy, im, file=Path('im.jpg'), gain=1.02, pad=10, square=False,
 
 
 def blend_colors_based_on_prob_for_seg(seg_prob):
-    alphas = 50 + seg_prob * 150    # Map 0<=seg_prob<=1 to be between 50 - 150
+    alphas = seg_prob * 150
     total_alpha = torch.sum(alphas)
     if total_alpha == 0:
         return (0, 0, 0), 0
@@ -486,15 +486,21 @@ def plot_images(images,
                     if labels or conf[j] > 0.25:  # 0.25 conf thresh
                         annotator.kpts(kpts_[j])
 
-            if seg_results is not None and len(seg_results) > 0:
-                image_segs = seg_results[i]
-                seg_center_xy = image_segs[:, :2] * (image_segs[:, 2].unsqueeze(1).repeat(1, 2))
-                strides = image_segs[:, 2].unsqueeze(1)
-                seg_probs = image_segs[:, 3:]
+            if seg_results is not None:
                 overlay = Image.new('RGBA', annotator.im.size, (0, 0, 0, 0)) # to create highlights
                 overlay_draw = ImageDraw.Draw(overlay)
-                for cx_orig, cy_orig, stride, seg_prob in zip(seg_center_xy[:, 0], seg_center_xy[:, 1], strides, seg_probs):
-                    if stride not in res_grid_size:
+
+                seg_probs = seg_results[0][i]
+                seg_center_xy = seg_results[1][i]
+                strides = seg_results[2][i]
+                seg_center_xy = seg_center_xy * strides
+
+                for anchor_idx in range(seg_probs.shape[1]):
+                    stride = strides[0, anchor_idx]
+                    seg_prob = seg_probs[:, anchor_idx]
+                    cx_orig, cy_orig = seg_center_xy[0, anchor_idx], seg_center_xy[1, anchor_idx]
+
+                    if stride not in res_grid_size and (seg_prob < 0.5).all():
                         continue
                     scale_x, scale_y = w / original_w, h / original_h
                     cx_scaled, cy_scaled = cx_orig * scale_x, cy_orig * scale_y

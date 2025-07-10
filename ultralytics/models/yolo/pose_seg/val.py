@@ -3,7 +3,6 @@
 from pathlib import Path
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from ultralytics.models.yolo.pose import PoseValidator
 from ultralytics.utils import LOGGER, ops
@@ -118,7 +117,7 @@ class PoseSegValidator(PoseValidator):
             seg_logit (B, seg_ch_num, A) - logits for each segmentation class for each anchor
             Pi_list feature list used to construct the anchor points
         Output:
-            seg_results (list of tensors) - each tensor contains anchor points, strides, seg_class, seg_conf
+            seg_results (seg_logits, anchor_points, strides) with shapes (B, C, A), (B, 2, A), (B, 1, A)
         '''
         stride_tensor = self.model.stride
         if type(stride_tensor) is int: # When models are loaded, model.stride is the max stride
@@ -127,32 +126,10 @@ class PoseSegValidator(PoseValidator):
 
         anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, stride_tensor, 0.5))
         bs = Pi_list[0].shape[0]
-        strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1, A)
-        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A)
-        seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
+        strides = strides.unsqueeze(0).repeat(bs, 1, 1)
+        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1)
+        return (seg_logits, anchor_points, strides)
 
-        all_seg_probs =  F.softmax(seg_logits, dim=2)
-        # Normalize seg probs within the seg mask
-        seg_mask_expanded = seg_mask.unsqueeze(1).expand(-1, all_seg_probs.size(1), -1)
-        masked_probs = all_seg_probs[seg_mask_expanded]
-        if len(masked_probs) == 0:
-            return []
-        min_prob, max_prob = masked_probs.min(), masked_probs.max()
-        scaled_probs = (all_seg_probs - min_prob) / max_prob - min_prob  # This will then later be used to map to intesity range when visualized
-
-        seg_results = []
-        for b in range(bs):
-            selected_anchor_points = anchor_points[b, :, seg_mask[b]]
-            selected_strides = strides[b, :, seg_mask[b]]
-            seg_probs = scaled_probs[b, :, seg_mask[b]]
-            combined = torch.cat([
-                selected_anchor_points,
-                selected_strides,
-                seg_probs,
-            ], dim=0)
-            combined = combined.transpose(0, 1)
-            seg_results.append(combined)
-        return seg_results
 
 
     def plot_predictions(self, batch, predictions, ni):
