@@ -390,7 +390,7 @@ def plot_images(images,
                 on_plot=None,
                 seg_results=None,
                 res_grid_size=[8, 16, 32],
-                enable_hightlight=False,
+                enable_highlight=False,
                 ):
     """Plot image grid with labels."""
     if isinstance(images, torch.Tensor):
@@ -434,8 +434,8 @@ def plot_images(images,
 
     fs = int((h + w) * ns * 0.01)  # font size
     annotator = Annotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
-    if enable_hightlight:
-        assert len(bboxes) == 0 # highlight code doesn't work with bboxes visualization for unknown reasons
+    if enable_highlight:
+        assert len(bboxes) == 0, "highlight code doesn't work with bboxes visualization for unknown reasons"
         annotator.im = annotator.im.convert('RGBA')
 
     for i in range(i + 1):

@@ -160,5 +160,5 @@ class PoseSegValidator(PoseValidator):
                     on_plot=self.on_plot,
                     seg_results=seg_results,
                     res_grid_size=[8],
-                    enable_hightlight=True
+                    enable_highlight=True
                     )
