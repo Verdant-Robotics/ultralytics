@@ -15,6 +15,8 @@ from ultralytics.utils.instance import Instances
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.ops import segment2box
 
+from ultralytics.data.image_operations import Shuffler
+
 from .utils import polygons2masks, polygons2masks_overlap
 
 
@@ -126,6 +128,35 @@ class BaseMixTransform:
     def get_indexes(self):
         """Gets a list of shuffled indexes for mosaic augmentation."""
         raise NotImplementedError
+
+
+class CustomMosaic:
+    def __init__(self, p):
+        self.p = p
+        assert 0 <= p <= 1.0, f'The probability should be in range [0, 1], but got {p}.'
+
+    def __call__(self, labels):
+        img = labels['img'] # (H, W, C)
+        h, w, _ = img.shape
+        gt_labels = labels['instances']
+        slice_range = (10, 20)
+        shuffler = Shuffler(tile_shape=(h, w), num_oper_range=slice_range, scale=8)
+        shuffled_img = shuffler.shuffle(img)
+        gt_labels.convert_bbox(format='xyxy')
+        gt_labels.denormalize(w, h)
+        gt_bboxes = gt_labels.bboxes
+        gt_cls = labels['cls']
+        bboxes_img = np.zeros((gt_bboxes.shape[0], h, w))
+        for i in range(gt_bboxes.shape[0]):
+            # TODO: decision 1
+            x1, y1, x2, y2 = int(gt_bboxes[i, 0]), int(gt_bboxes[i, 1]), int(gt_bboxes[i, 2]), int(gt_bboxes[i, 3])
+            #
+            bboxes_img[i, y1:y2, x1:x2] = gt_cls[i]
+            bboxes_img[i] = shuffler.shuffle(bboxes_img[i][..., None]).squeeze(2)
+
+        labels['img'] = shuffled_img
+        labels['instances'].set_bboxes_img(bboxes_img)
+        return labels
 
 
 class Mosaic(BaseMixTransform):
@@ -918,7 +949,8 @@ class Format:
 def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose([
-        Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
+        # Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
+        CustomMosaic(p=hyp.mosaic),
         CopyPaste(p=hyp.copy_paste),
         RandomPerspective(
             degrees=hyp.degrees,

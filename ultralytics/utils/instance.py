@@ -240,6 +240,9 @@ class Instances:
     def bbox_areas(self):
         """Calculate the area of bounding boxes."""
         return self._bboxes.areas()
+    
+    def set_bboxes_img(self, bboxes_img):
+        self.bboxes_img = bboxes_img
 
     def scale(self, scale_w, scale_h, bbox_only=False):
         """This might be similar with denormalize func but without normalized sign."""
