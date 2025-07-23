@@ -205,7 +205,7 @@ class Instances:
         This class does not perform input validation, and it assumes the inputs are well-formed.
     """
 
-    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format='xywh', normalized=True) -> None:
+    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format='xywh', normalized=True, bboxes_img=None) -> None:
         """
         Args:
             bboxes (ndarray): bboxes with shape [N, 4].
@@ -217,6 +217,8 @@ class Instances:
         self._bboxes = Bboxes(bboxes=bboxes, format=bbox_format)
         self.keypoints = keypoints
         self.normalized = normalized
+
+        self.bboxes_img = bboxes_img
 
         if keypoints is not None:
             assert len(keypoints) == len(
@@ -231,6 +233,7 @@ class Instances:
         else:
             segments = np.zeros((0, 1000, 2), dtype=np.float32)
         self.segments = segments
+        self.bboxes_img = bboxes_img
 
     def convert_bbox(self, format):
         """Convert bounding box format."""
@@ -240,9 +243,6 @@ class Instances:
     def bbox_areas(self):
         """Calculate the area of bounding boxes."""
         return self._bboxes.areas()
-    
-    def set_bboxes_img(self, bboxes_img):
-        self.bboxes_img = bboxes_img
 
     def scale(self, scale_w, scale_h, bbox_only=False):
         """This might be similar with denormalize func but without normalized sign."""
@@ -314,12 +314,18 @@ class Instances:
             keypoints = self.keypoints[index]
         bboxes = self.bboxes[index]
         bbox_format = self._bboxes.format
+        
+        bboxes_img = None
+        if self.bboxes_img is not None:
+            bboxes_img = self.bboxes_img
+
         return Instances(
             bboxes=bboxes,
             segments=segments,
             keypoints=keypoints,
             bbox_format=bbox_format,
             normalized=self.normalized,
+            bboxes_img=bboxes_img,
         )
 
     def flipud(self, h):

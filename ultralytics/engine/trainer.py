@@ -366,6 +366,7 @@ class BaseTrainer:
             if RANK != -1:
                 self.train_loader.sampler.set_epoch(epoch)
             pbar = enumerate(self.train_loader)
+            # breakpoint()
             # Update dataloader attributes (optional)
             if epoch == (self.epochs - self.args.close_mosaic):
                 LOGGER.info('Closing dataloader mosaic')
@@ -398,6 +399,7 @@ class BaseTrainer:
 
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
+                    
                     batch = self.preprocess_batch(batch)
                     self.loss, self.loss_items = self.model(batch)
                     if RANK != -1:

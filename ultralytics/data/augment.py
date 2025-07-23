@@ -155,7 +155,7 @@ class CustomMosaic:
             bboxes_img[i] = shuffler.shuffle(bboxes_img[i][..., None]).squeeze(2)
 
         labels['img'] = shuffled_img
-        labels['instances'].set_bboxes_img(bboxes_img)
+        labels['instances'].bboxes_img = bboxes_img
         return labels
 
 
@@ -922,6 +922,9 @@ class Format:
         # Then we can use collate_fn
         if self.batch_idx:
             labels['batch_idx'] = torch.zeros(nl)
+        
+        if instances.bboxes_img is not None:
+            labels['bboxes_img'] = torch.from_numpy(instances.bboxes_img)
         return labels
 
     def _format_img(self, img):
@@ -950,7 +953,6 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose([
         # Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
-        CustomMosaic(p=hyp.mosaic),
         CopyPaste(p=hyp.copy_paste),
         RandomPerspective(
             degrees=hyp.degrees,
@@ -960,6 +962,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             perspective=hyp.perspective,
             pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
         )])
+
     flip_idx = dataset.data.get('flip_idx', [])  # for keypoints augmentation
     if dataset.use_keypoints:
         kpt_shape = dataset.data.get('kpt_shape', None)
@@ -968,14 +971,15 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             LOGGER.warning("WARNING ⚠️ No 'flip_idx' array defined in data.yaml, setting augmentation 'fliplr=0.0'")
         elif flip_idx and (len(flip_idx) != kpt_shape[0]):
             raise ValueError(f'data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}')
-
+    
     return Compose([
         pre_transform,
         MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
         Albumentations(p=1.0),
         RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
         RandomFlip(direction='vertical', p=hyp.flipud),
-        RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx)])  # transforms
+        RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx),
+        CustomMosaic(p=hyp.mosaic)])  # CustomMosaic MUST always be the last!
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------

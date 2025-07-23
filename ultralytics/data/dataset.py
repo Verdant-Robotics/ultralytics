@@ -143,6 +143,7 @@ class YOLODataset(BaseDataset):
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+
         transforms.append(
             Format(bbox_format='xywh',
                    normalize=True,
@@ -151,6 +152,7 @@ class YOLODataset(BaseDataset):
                    batch_idx=True,
                    mask_ratio=hyp.mask_ratio,
                    mask_overlap=hyp.overlap_mask))
+        
         return transforms
 
     def close_mosaic(self, hyp):
@@ -169,8 +171,9 @@ class YOLODataset(BaseDataset):
         keypoints = label.pop('keypoints', None)
         bbox_format = label.pop('bbox_format')
         normalized = label.pop('normalized')
-
-        label['instances'] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized)
+        bboxes_img = label.pop('bboxes_img', None)
+        print('update labels info: ', bboxes_img)
+        label['instances'] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, bboxes_img=bboxes_img)
         return label
 
     @staticmethod
@@ -183,10 +186,9 @@ class YOLODataset(BaseDataset):
             value = values[i]
             if k == 'img':
                 value = torch.stack(value, 0)
-            if k in ['masks', 'keypoints', 'bboxes', 'cls']:
+            if k in ['masks', 'keypoints', 'bboxes', 'cls', 'bboxes_img']:
                 value = torch.cat(value, 0)
             new_batch[k] = value
-
         new_batch['batch_idx'] = list(new_batch['batch_idx'])
         for i in range(len(new_batch['batch_idx'])):
             new_batch['batch_idx'][i] += i  # add target image index for build_targets()
