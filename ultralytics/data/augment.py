@@ -136,6 +136,9 @@ class CustomMosaic:
         assert 0 <= p <= 1.0, f'The probability should be in range [0, 1], but got {p}.'
 
     def __call__(self, labels):
+        if 1 - random.random() > self.p:
+            return labels
+        
         img = labels['img'] # (H, W, C)
         h, w, _ = img.shape
         gt_labels = labels['instances']
@@ -156,6 +159,7 @@ class CustomMosaic:
 
         labels['img'] = shuffled_img
         labels['instances'].bboxes_img = bboxes_img
+        print('\ncustom_mosaic applied for image: ', labels['im_file'])
         return labels
 
 
@@ -952,7 +956,7 @@ class Format:
 def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose([
-        # Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
+        Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
         CopyPaste(p=hyp.copy_paste),
         RandomPerspective(
             degrees=hyp.degrees,
@@ -971,7 +975,6 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             LOGGER.warning("WARNING ⚠️ No 'flip_idx' array defined in data.yaml, setting augmentation 'fliplr=0.0'")
         elif flip_idx and (len(flip_idx) != kpt_shape[0]):
             raise ValueError(f'data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}')
-    
     return Compose([
         pre_transform,
         MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
@@ -979,7 +982,7 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
         RandomFlip(direction='vertical', p=hyp.flipud),
         RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx),
-        CustomMosaic(p=hyp.mosaic)])  # CustomMosaic MUST always be the last!
+        CustomMosaic(p=hyp.shuffler_mosaic)])  # CustomMosaic MUST always be the last!
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------

@@ -139,11 +139,13 @@ class YOLODataset(BaseDataset):
         """Builds and appends transforms to the list."""
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.shuffler_mosaic = hyp.shuffler_mosaic
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
 
+        print('building transforms: ', self.augment)
         transforms.append(
             Format(bbox_format='xywh',
                    normalize=True,
@@ -160,6 +162,7 @@ class YOLODataset(BaseDataset):
         hyp.mosaic = 0.0  # set mosaic ratio=0.0
         hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
         hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
+        hyp.shuffler_mosaic = 0.0
         self.transforms = self.build_transforms(hyp)
 
     def update_labels_info(self, label):
@@ -172,7 +175,7 @@ class YOLODataset(BaseDataset):
         bbox_format = label.pop('bbox_format')
         normalized = label.pop('normalized')
         bboxes_img = label.pop('bboxes_img', None)
-        print('update labels info: ', bboxes_img)
+        # print('update labels info: ', bboxes_img)
         label['instances'] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, bboxes_img=bboxes_img)
         return label
 

@@ -530,12 +530,18 @@ class v8PoseSegLoss(v8PoseLoss):
         super().__init__(model)
         self.bce_inside = nn.BCEWithLogitsLoss(reduction='none')
         self.seg_ch_num = model.model[-1].seg_ch_num
+        self.model = model
 
     def __call__(self, preds, batch):
+        b = batch.get('bboxes_img', None)
+        # if b is None:
+        #     print('none, ', self.model.training)
+        # else:
+        #     print(b.shape, self.model.training)
+
         loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
-
         pred_distri, pred_scores, pred_seg = all_preds.split((self.reg_max * 4, self.nc, self.seg_ch_num), 1)
 
         # B, grids, ..
