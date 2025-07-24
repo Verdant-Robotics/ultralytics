@@ -639,7 +639,30 @@ class v8PoseSegLoss(v8PoseLoss):
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
     def calculate_seg_loss_v2(self, pred_seg, anchor_points, stride_tensor, bboxes_img):
-        return 1
+        """
+            pred_seg (B, A, seg_ch_num): predicted seg result for anchor points
+            bboxes_img (B, T, A): T different number of detections bboxes_img[b][t] = -1 or segmentation class (0, ..., seg_ch_num)
+        """
+        # bboxes_img collapse all the detections to seg_ch_num -> (B, A, seg_ch_num) 
+        # if an anchor has different seg classes in different T, then [b, a, c0] = [b, a, c1] = 1/len(classes)
+
+        B, _, A = bboxes_img.shape
+        _, _, C = pred_seg.shape
+        
+        target_seg = torch.zeros(B, A, C, device=self.device)
+
+        for b in range(B):
+            for a in range(A):
+                classes = bboxes_img[b, :, a]
+                valid_classes = classes[classes != -1].unique()
+                if len(valid_classes) > 0:
+                    for c in valid_classes:
+                        target_seg[b, a, int(c.item())] = 1.0 / len(valid_classes)
+
+        loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
+        anchor_weights = torch.ones_like(loss_per_anchor)  # (B, A, C)
+        weighted_loss = loss_per_anchor * anchor_weights # (B, A, C)
+        return weighted_loss.mean()
 
 
     def calculate_seg_loss(self, pred_seg, anchor_points, stride_tensor, gt_bboxes, gt_labels, mask_gt):
