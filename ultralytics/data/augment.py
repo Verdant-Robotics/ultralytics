@@ -149,7 +149,7 @@ class CustomMosaic:
         gt_labels.denormalize(w, h)
         gt_bboxes = gt_labels.bboxes
         gt_cls = labels['cls']
-        bboxes_img = np.zeros((gt_bboxes.shape[0], h, w))
+        bboxes_img = np.full((gt_bboxes.shape[0], h, w), fill_value=-1)
         for i in range(gt_bboxes.shape[0]):
             # TODO: decision 1
             x1, y1, x2, y2 = int(gt_bboxes[i, 0]), int(gt_bboxes[i, 1]), int(gt_bboxes[i, 2]), int(gt_bboxes[i, 3])
@@ -159,7 +159,6 @@ class CustomMosaic:
 
         labels['img'] = shuffled_img
         labels['instances'].bboxes_img = bboxes_img
-        print('\ncustom_mosaic applied for image: ', labels['im_file'])
         return labels
 
 
