@@ -533,32 +533,6 @@ class v8PoseSegLoss(v8PoseLoss):
         self.seg_ch_num = model.model[-1].seg_ch_num
         self.training = model.training
 
-    def get_targets(self, batch, batch_idx, batch_size, imgsz):
-        if batch.get('bboxes_img', None) is not None:
-            bboxes_img = batch['bboxes_img'].unsqueeze(0).float() # (1, 4, 32, 32)
-            # TODO: decision 2
-            bboxes_img_res0 = F.interpolate(bboxes_img, scale_factor=float(1/self.stride[0]), mode='nearest').squeeze(0).flatten(start_dim=1) # 4, 16
-            bboxes_img_res1 = F.interpolate(bboxes_img, scale_factor=float(1/self.stride[1]), mode='nearest').squeeze(0).flatten(start_dim=1) # 4, 4
-            bboxes_img_res2 = F.interpolate(bboxes_img, scale_factor=float(1/self.stride[2]), mode='nearest').squeeze(0).flatten(start_dim=1) # 4, 1
-            res_summed = bboxes_img_res0.shape[1] + bboxes_img_res1.shape[1] + bboxes_img_res2.shape[1]
-            # 
-
-            targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes'], bboxes_img_res0, bboxes_img_res1, bboxes_img_res2), 1) # 4, 27
-            targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]]) # B, D, C = 1 + 4 + (16+4+1)
-            gt_labels, gt_bboxes, gt_bboxes_img = targets.split((1, 4, res_summed), 2)  # cls, xyxy
-        
-        else:
-            targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1) # 4, 6
-            targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
-            gt_labels, gt_bboxes = targets.split((1, 4), 2)
-            gt_bboxes_img = None
-
-        return {'gt_labels': gt_labels,
-                'gt_bboxes': gt_bboxes,
-                'gt_bboxes_img': gt_bboxes_img
-                }
-
-
     def __call__(self, preds, batch):
         loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
@@ -577,7 +551,7 @@ class v8PoseSegLoss(v8PoseLoss):
 
         # Targets
         batch_size = pred_scores.shape[0]
-        batch_idx = batch['batch_idx'].view(-1, 1)
+        batch_idx = batch['batch_idx'].view(-1, 1) # 0, 1, 1, 2
 
         gt_targets = self.get_targets(batch, batch_idx, batch_size, imgsz)
         
@@ -614,8 +588,6 @@ class v8PoseSegLoss(v8PoseLoss):
         if custom_mosaic_enabled:
             loss[5] = self.calculate_seg_loss_v2(
                 pred_seg=pred_seg,
-                anchor_points=anchor_points,
-                stride_tensor=stride_tensor,
                 bboxes_img=gt_targets['gt_bboxes_img'],
             )
 
@@ -629,7 +601,6 @@ class v8PoseSegLoss(v8PoseLoss):
                     mask_gt=mask_gt,
                 )
 
-
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
         loss[2] *= self.hyp.kobj  # kobj gain
@@ -638,27 +609,39 @@ class v8PoseSegLoss(v8PoseLoss):
         loss[5] *= self.hyp.seg  # seg gain
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
-    def calculate_seg_loss_v2(self, pred_seg, anchor_points, stride_tensor, bboxes_img):
-        """
-            pred_seg (B, A, seg_ch_num): predicted seg result for anchor points
-            bboxes_img (B, T, A): T different number of detections bboxes_img[b][t] = -1 or segmentation class (0, ..., seg_ch_num)
-        """
-        # bboxes_img collapse all the detections to seg_ch_num -> (B, A, seg_ch_num) 
-        # if an anchor has different seg classes in different T, then [b, a, c0] = [b, a, c1] = 1/len(classes)
 
-        B, _, A = bboxes_img.shape
-        _, _, C = pred_seg.shape
+    def get_targets(self, batch, batch_idx, batch_size, imgsz):
+        targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1) # (4, 6)
+        targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
+        gt_labels, gt_bboxes = targets.split((1, 4), 2) # (B, T, 1), (B, T, 1)
         
-        target_seg = torch.zeros(B, A, C, device=self.device)
+        gt_bboxes_img = None    
+        if batch.get('bboxes_img', None) is not None:
+            bboxes_img = batch['bboxes_img'].float() # B, H, W, C
+            bboxes_img = bboxes_img.permute(0, 3, 1, 2) # B, C, H, W
+            bboxes_img_multi_res = [F.interpolate(bboxes_img,
+                                     scale_factor=float(1/stride),
+                                     mode='nearest').flatten(start_dim=2) for stride in self.stride]
+            gt_bboxes_img = torch.cat(bboxes_img_multi_res, dim=2).to(self.device)
 
-        for b in range(B):
-            for a in range(A):
-                classes = bboxes_img[b, :, a]
-                valid_classes = classes[classes != -1].unique()
-                if len(valid_classes) > 0:
-                    for c in valid_classes:
-                        target_seg[b, a, int(c.item())] = 1.0 / len(valid_classes)
+            B, C, L = gt_bboxes_img.shape # when we create gt_bboxes_img we might not have all the classes
+            if C < self.seg_ch_num:
+                extended_gt_bboxes_img = torch.zeros((B, self.seg_ch_num, L), device=self.device)
+                extended_gt_bboxes_img[:, :C, :] = gt_bboxes_img
+                gt_bboxes = extended_gt_bboxes_img
 
+        return {'gt_labels': gt_labels,
+                'gt_bboxes': gt_bboxes,
+                'gt_bboxes_img': gt_bboxes_img
+                }
+
+
+    def calculate_seg_loss_v2(self, pred_seg, bboxes_img):
+        """
+            pred_seg (B, A, C)
+            bboxes_img (B, C, A)
+        """
+        target_seg = bboxes_img.permute(0, 2, 1) # B, A, C
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
         anchor_weights = torch.ones_like(loss_per_anchor)  # (B, A, C)
         weighted_loss = loss_per_anchor * anchor_weights # (B, A, C)
@@ -723,24 +706,6 @@ class v8PoseSegLoss(v8PoseLoss):
         weighted_loss = loss_per_anchor * anchor_weights # (B, A, C)
 
         return weighted_loss.mean()
-
-
-    def preprocess(self, targets, batch_size, scale_tensor):
-        """Preprocesses the target counts and matches with the input batch size to output a tensor."""
-        if targets.shape[0] == 0:
-            out = torch.zeros(batch_size, 0, targets.shape[1] - 1, device=self.device)
-        else:
-            i = targets[:, 0]  # image index
-            _, counts = i.unique(return_counts=True)
-            counts = counts.to(dtype=torch.int32)
-            out = torch.zeros(batch_size, counts.max(), targets.shape[1] - 1, device=self.device)
-            for j in range(batch_size):
-                matches = i == j
-                n = matches.sum()
-                if n:
-                    out[j, :n] = targets[matches, 1:]
-            out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
-        return out
         
 
 class v8PoseTunableHeadLoss(v8PoseLoss):

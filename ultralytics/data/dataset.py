@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import torch
 import torchvision
+import torch.nn.functional as F
+
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, is_dir_writeable
 
@@ -182,17 +184,24 @@ class YOLODataset(BaseDataset):
     @staticmethod
     def collate_fn(batch):
         """Collates data samples into batches."""
+        # batch corresponds to labels in augment.py :smileyface:
         new_batch = {}
         keys = batch[0].keys()
         values = list(zip(*[list(b.values()) for b in batch]))
+
         for i, k in enumerate(keys):
             value = values[i]
             if k == 'img':
                 value = torch.stack(value, 0)
-            if k in ['masks', 'keypoints', 'bboxes', 'cls', 'bboxes_img']:
+            if k in ['masks', 'keypoints', 'bboxes', 'cls']:
                 value = torch.cat(value, 0)
+            if k in ['bboxes_img']:
+                max_d = max(v.shape[-1] for v in value)
+                padded_value = [F.pad(v, (0, max_d - v.shape[-1]), mode='constant', value=0) if v.shape[-1] < max_d else v for v in value]
+                value = torch.cat(padded_value, 0)
             new_batch[k] = value
         new_batch['batch_idx'] = list(new_batch['batch_idx'])
+
         for i in range(len(new_batch['batch_idx'])):
             new_batch['batch_idx'][i] += i  # add target image index for build_targets()
         new_batch['batch_idx'] = torch.cat(new_batch['batch_idx'], 0)

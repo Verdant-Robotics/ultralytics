@@ -138,7 +138,7 @@ class CustomMosaic:
     def __call__(self, labels):
         if 1 - random.random() > self.p:
             return labels
-        
+
         img = labels['img'] # (H, W, C)
         h, w, _ = img.shape
         gt_labels = labels['instances']
@@ -149,17 +149,22 @@ class CustomMosaic:
         gt_labels.denormalize(w, h)
         gt_bboxes = gt_labels.bboxes
         gt_cls = labels['cls']
-        bboxes_img = np.full((gt_bboxes.shape[0], h, w), fill_value=-1)
-        
-        for i in range(gt_bboxes.shape[0]):
-            # TODO: decision 1
-            x1, y1, x2, y2 = int(gt_bboxes[i, 0]), int(gt_bboxes[i, 1]), int(gt_bboxes[i, 2]), int(gt_bboxes[i, 3])
-            #
-            bboxes_img[i, y1:y2, x1:x2] = gt_cls[i]
-            bboxes_img[i] = shuffler.shuffle(bboxes_img[i][..., None]).squeeze(2)
+
+        if len(gt_cls) == 0:
+            bboxes_img = np.zeros((h, w, 0))
+        else:
+            num_classes = int(gt_cls.max()) + 1
+            bboxes_img = np.zeros((h, w, num_classes)) # H, W, C
+            for i in range(gt_bboxes.shape[0]):
+                # TODO: decision 1
+                x1, y1, x2, y2 = int(gt_bboxes[i, 0]), int(gt_bboxes[i, 1]), int(gt_bboxes[i, 2]), int(gt_bboxes[i, 3])
+                #
+
+                bboxes_img[y1:y2, x1:x2, int(gt_cls[i])] = 1
+                bboxes_img = shuffler.shuffle(bboxes_img)
 
         labels['img'] = shuffled_img
-        labels['instances'].bboxes_img = bboxes_img
+        labels['instances'].bboxes_img = bboxes_img[None, ...] # (1, 32, 32, 2)
         return labels
 
 
