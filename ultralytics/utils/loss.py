@@ -597,7 +597,7 @@ class v8PoseSegLoss(v8PoseLoss):
         batch_idx = batch['batch_idx'].view(-1, 1)
         gt_labels, gt_bboxes, gt_bboxes_img = self.get_targets(batch, batch_idx, batch_size, imgsz)
 
-        is_shuffled = True in batch['is_shuffled'] # need item specific 
+        is_shuffled = True in batch.get('is_shuffled', [False]) # need item specific 
         
         if is_shuffled:
             loss = self.shuffled_loss_function(pred_seg, gt_bboxes_img)
