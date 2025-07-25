@@ -142,7 +142,7 @@ class CustomMosaic:
         img = labels['img'] # (H, W, C)
         h, w, _ = img.shape
         gt_labels = labels['instances']
-        slice_range = (0, 0)
+        slice_range = (15, 20)
 
         shuffler = Shuffler(tile_shape=(h, w), num_oper_range=slice_range, scale=8)
         shuffled_img = shuffler.shuffle(img)

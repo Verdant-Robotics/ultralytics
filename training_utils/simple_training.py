@@ -42,7 +42,7 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=100,
+        epochs=300,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
