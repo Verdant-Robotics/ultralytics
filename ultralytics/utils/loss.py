@@ -532,9 +532,55 @@ class v8PoseSegLoss(v8PoseLoss):
         self.bce_inside = nn.BCEWithLogitsLoss(reduction='none')
         self.seg_ch_num = model.model[-1].seg_ch_num
         self.training = model.training
+    
+    def shuffled_loss_function(self, pred_seg, gt_bboxes_img):
+        loss = torch.zeros(6, device=self.device)
+        loss[5] = self.calculate_seg_loss_v2(
+            pred_seg=pred_seg,
+            bboxes_img=gt_bboxes_img,
+        )
+        return loss
+
+
+    def none_shuffled_loss_function(self, pred_kpts, batch_idx, feats, pred_distri, batch_size, pred_scores, gt_labels, gt_bboxes, dtype, batch, imgsz, pred_seg):
+        loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
+        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # (B, h x w, 4(xyxy))
+        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))
+
+        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
+            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
+            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+
+        target_scores_sum = max(target_scores.sum(), 1)
+
+        loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
+
+        # Bbox, kpt
+        if fg_mask.sum(): # if any anchor has gt
+            target_bboxes /= stride_tensor
+            loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
+                                              target_scores_sum, fg_mask)
+            keypoints = batch['keypoints'].to(self.device).float().clone()
+            keypoints[..., 0] *= imgsz[1]
+            keypoints[..., 1] *= imgsz[0]
+
+            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
+                                                             stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
+        
+        loss[5] = self.calculate_seg_loss(
+            pred_seg=pred_seg,
+            anchor_points=anchor_points,
+            stride_tensor=stride_tensor,
+            gt_bboxes=gt_bboxes,
+            gt_labels=gt_labels,
+            mask_gt=mask_gt,
+        )
+        return loss
+
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
         pred_distri, pred_scores, pred_seg = all_preds.split((self.reg_max * 4, self.nc, self.seg_ch_num), 1)
@@ -547,59 +593,17 @@ class v8PoseSegLoss(v8PoseLoss):
 
         dtype = pred_scores.dtype
         imgsz = torch.tensor(feats[0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]  # image size (h,w)
-        anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
-
-        # Targets
         batch_size = pred_scores.shape[0]
-        batch_idx = batch['batch_idx'].view(-1, 1) # 0, 1, 1, 2
+        batch_idx = batch['batch_idx'].view(-1, 1)
+        gt_labels, gt_bboxes, gt_bboxes_img = self.get_targets(batch, batch_idx, batch_size, imgsz)
 
-        gt_targets = self.get_targets(batch, batch_idx, batch_size, imgsz)
+        is_shuffled = True in batch['is_shuffled'] # need item specific 
         
-        custom_mosaic_enabled = gt_targets['gt_bboxes_img'] != None
-
-        gt_labels, gt_bboxes = gt_targets['gt_labels'], gt_targets['gt_bboxes']
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
-
-        # Pboxes
-        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # (B, h x w, 4(xyxy))
-        pred_kpts = self.kpts_decode(anchor_points, pred_kpts.view(batch_size, -1, *self.kpt_shape))
-
-        _, target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
-            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
-
-        target_scores_sum = max(target_scores.sum(), 1)
-
-        # Cls loss
-        loss[3] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
-
-        # Bbox, kpt
-        if fg_mask.sum() and not custom_mosaic_enabled: # if any anchor has gt
-            target_bboxes /= stride_tensor
-            loss[0], loss[4] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes, target_scores,
-                                              target_scores_sum, fg_mask)
-            keypoints = batch['keypoints'].to(self.device).float().clone()
-            keypoints[..., 0] *= imgsz[1]
-            keypoints[..., 1] *= imgsz[0]
-
-            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
-                                                             stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
-
-        if custom_mosaic_enabled:
-            loss[5] = self.calculate_seg_loss_v2(
-                pred_seg=pred_seg,
-                bboxes_img=gt_targets['gt_bboxes_img'],
-            )
-
+        if is_shuffled:
+            loss = self.shuffled_loss_function(pred_seg, gt_bboxes_img)
         else:
-            loss[5] = self.calculate_seg_loss(
-                    pred_seg=pred_seg,
-                    anchor_points=anchor_points,
-                    stride_tensor=stride_tensor,
-                    gt_bboxes=gt_bboxes,
-                    gt_labels=gt_labels,
-                    mask_gt=mask_gt,
-                )
+            loss = self.none_shuffled_loss_function(pred_kpts, batch_idx, feats, pred_distri, batch_size, pred_scores, gt_labels,
+                                                     gt_bboxes, dtype, batch, imgsz, pred_seg)
 
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
@@ -625,15 +629,13 @@ class v8PoseSegLoss(v8PoseLoss):
             gt_bboxes_img = torch.cat(bboxes_img_multi_res, dim=2).to(self.device)
 
             B, C, L = gt_bboxes_img.shape # when we create gt_bboxes_img we might not have all the classes
+
             if C < self.seg_ch_num:
                 extended_gt_bboxes_img = torch.zeros((B, self.seg_ch_num, L), device=self.device)
                 extended_gt_bboxes_img[:, :C, :] = gt_bboxes_img
                 gt_bboxes = extended_gt_bboxes_img
 
-        return {'gt_labels': gt_labels,
-                'gt_bboxes': gt_bboxes,
-                'gt_bboxes_img': gt_bboxes_img
-                }
+        return gt_labels, gt_bboxes, gt_bboxes_img
 
 
     def calculate_seg_loss_v2(self, pred_seg, bboxes_img):

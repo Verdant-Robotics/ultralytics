@@ -10,10 +10,13 @@ class Shuffler:
             self.operations = self._create_operations(tile_shape, num_oper_range, scale)
 
     def _create_operations(self, tile_shape, num_oper_range, scale):
+        operations = []
+        if num_oper_range == (0, 0):
+            return operations
+        
         num_oper_x = np.random.randint(num_oper_range[0], num_oper_range[1])
         num_oper_y = np.random.randint(num_oper_range[0], num_oper_range[1])
         H, W = tile_shape
-        operations = []
         for _ in range(num_oper_x):
             y_ran = np.random.randint(0, H // scale) * scale
             delta_x_top_ran = np.random.randint(0, W // scale) * scale

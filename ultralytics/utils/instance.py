@@ -6,7 +6,7 @@ from numbers import Number
 from typing import List
 
 import numpy as np
-
+import torch
 from .ops import ltwh2xywh, ltwh2xyxy, resample_segments, xywh2ltwh, xywh2xyxy, xyxy2ltwh, xyxy2xywh
 
 
@@ -205,7 +205,7 @@ class Instances:
         This class does not perform input validation, and it assumes the inputs are well-formed.
     """
 
-    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format='xywh', normalized=True, bboxes_img=None) -> None:
+    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format='xywh', normalized=True, bboxes_img=None, is_shuffled=False) -> None:
         """
         Args:
             bboxes (ndarray): bboxes with shape [N, 4].
@@ -219,6 +219,7 @@ class Instances:
         self.normalized = normalized
 
         self.bboxes_img = bboxes_img
+        self.is_shuffled = is_shuffled
 
         if keypoints is not None:
             assert len(keypoints) == len(
@@ -233,7 +234,6 @@ class Instances:
         else:
             segments = np.zeros((0, 1000, 2), dtype=np.float32)
         self.segments = segments
-        self.bboxes_img = bboxes_img
 
     def convert_bbox(self, format):
         """Convert bounding box format."""
@@ -318,6 +318,7 @@ class Instances:
         bboxes_img = None
         if self.bboxes_img is not None:
             bboxes_img = self.bboxes_img
+        is_shuffled = self.is_shuffled
 
         return Instances(
             bboxes=bboxes,
@@ -326,6 +327,7 @@ class Instances:
             bbox_format=bbox_format,
             normalized=self.normalized,
             bboxes_img=bboxes_img,
+            is_shuffled=is_shuffled
         )
 
     def flipud(self, h):

@@ -49,7 +49,7 @@ if __name__ == "__main__":
         mosaic=0.0,
         shuffler_mosaic=1.0,
         close_mosaic=0,
-        imgsz=32,
+        imgsz=768,
         seed=1,
         batch=128,
         name=experiment_name,

@@ -199,6 +199,7 @@ class YOLODataset(BaseDataset):
                 max_d = max(v.shape[-1] for v in value)
                 padded_value = [F.pad(v, (0, max_d - v.shape[-1]), mode='constant', value=0) if v.shape[-1] < max_d else v for v in value]
                 value = torch.cat(padded_value, 0)
+            
             new_batch[k] = value
         new_batch['batch_idx'] = list(new_batch['batch_idx'])
 

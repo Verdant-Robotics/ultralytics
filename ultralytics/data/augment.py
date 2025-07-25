@@ -142,7 +142,8 @@ class CustomMosaic:
         img = labels['img'] # (H, W, C)
         h, w, _ = img.shape
         gt_labels = labels['instances']
-        slice_range = (10, 20)
+        slice_range = (0, 0)
+
         shuffler = Shuffler(tile_shape=(h, w), num_oper_range=slice_range, scale=8)
         shuffled_img = shuffler.shuffle(img)
         gt_labels.convert_bbox(format='xyxy')
@@ -165,6 +166,10 @@ class CustomMosaic:
 
         labels['img'] = shuffled_img
         labels['instances'].bboxes_img = bboxes_img[None, ...] # (1, 32, 32, 2)
+        if slice_range == (0, 0):
+            labels['instances'].is_shuffled = False
+        else:
+            labels['instances'].is_shuffled = True
         return labels
 
 
@@ -934,6 +939,8 @@ class Format:
         
         if instances.bboxes_img is not None:
             labels['bboxes_img'] = torch.from_numpy(instances.bboxes_img)
+        
+        labels['is_shuffled'] = instances.is_shuffled
         return labels
 
     def _format_img(self, img):
