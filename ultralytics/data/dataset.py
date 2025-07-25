@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torchvision
 import torch.nn.functional as F
-
+from torch.nn.utils.rnn import pad_sequence
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, is_dir_writeable
 
@@ -147,7 +147,6 @@ class YOLODataset(BaseDataset):
         else:
             transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
 
-        print('building transforms: ', self.augment)
         transforms.append(
             Format(bbox_format='xywh',
                    normalize=True,
@@ -195,10 +194,9 @@ class YOLODataset(BaseDataset):
                 value = torch.stack(value, 0)
             if k in ['masks', 'keypoints', 'bboxes', 'cls']:
                 value = torch.cat(value, 0)
-            if k in ['bboxes_img']:
-                max_d = max(v.shape[-1] for v in value)
-                padded_value = [F.pad(v, (0, max_d - v.shape[-1]), mode='constant', value=0) if v.shape[-1] < max_d else v for v in value]
-                value = torch.cat(padded_value, 0)
+            if k in ['bboxes_img']: # (C, H, W)
+                value = pad_sequence(value, batch_first=True)
+                # value = torch.stack(value, 0)
             
             new_batch[k] = value
         new_batch['batch_idx'] = list(new_batch['batch_idx'])

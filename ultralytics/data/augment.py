@@ -143,6 +143,7 @@ class CustomMosaic:
         h, w, _ = img.shape
         gt_labels = labels['instances']
         slice_range = (15, 20)
+        # slice_range = (0, 0)
 
         shuffler = Shuffler(tile_shape=(h, w), num_oper_range=slice_range, scale=8)
         shuffled_img = shuffler.shuffle(img)
@@ -152,9 +153,10 @@ class CustomMosaic:
         gt_cls = labels['cls']
 
         if len(gt_cls) == 0:
-            bboxes_img = np.zeros((h, w, 0))
+            bboxes_img = np.zeros((h, w, 2))
         else:
             num_classes = int(gt_cls.max()) + 1
+            # num_classes = 2
             bboxes_img = np.zeros((h, w, num_classes)) # H, W, C
             for i in range(gt_bboxes.shape[0]):
                 # TODO: decision 1
@@ -165,7 +167,7 @@ class CustomMosaic:
                 bboxes_img = shuffler.shuffle(bboxes_img)
 
         labels['img'] = shuffled_img
-        labels['instances'].bboxes_img = bboxes_img[None, ...] # (1, 32, 32, 2)
+        labels['instances'].bboxes_img = bboxes_img 
         if slice_range == (0, 0):
             labels['instances'].is_shuffled = False
         else:
@@ -936,10 +938,11 @@ class Format:
         # Then we can use collate_fn
         if self.batch_idx:
             labels['batch_idx'] = torch.zeros(nl)
-        
+
         if instances.bboxes_img is not None:
-            labels['bboxes_img'] = torch.from_numpy(instances.bboxes_img)
-        
+            bboxes_img = np.ascontiguousarray(instances.bboxes_img.transpose(2, 0, 1))
+            labels['bboxes_img'] = torch.from_numpy(bboxes_img)
+
         labels['is_shuffled'] = instances.is_shuffled
         return labels
 

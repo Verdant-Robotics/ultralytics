@@ -599,11 +599,14 @@ class v8PoseSegLoss(v8PoseLoss):
 
         is_shuffled = True in batch.get('is_shuffled', [False]) # need item specific 
         
+        # try:
         if is_shuffled:
-            loss = self.shuffled_loss_function(pred_seg, gt_bboxes_img)
+                loss = self.shuffled_loss_function(pred_seg, gt_bboxes_img)
         else:
-            loss = self.none_shuffled_loss_function(pred_kpts, batch_idx, feats, pred_distri, batch_size, pred_scores, gt_labels,
-                                                     gt_bboxes, dtype, batch, imgsz, pred_seg)
+                loss = self.none_shuffled_loss_function(pred_kpts, batch_idx, feats, pred_distri, batch_size, pred_scores, gt_labels,
+                                                        gt_bboxes, dtype, batch, imgsz, pred_seg)
+        # except:
+        #     breakpoint()
 
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
@@ -621,8 +624,7 @@ class v8PoseSegLoss(v8PoseLoss):
         
         gt_bboxes_img = None    
         if batch.get('bboxes_img', None) is not None:
-            bboxes_img = batch['bboxes_img'].float() # B, H, W, C
-            bboxes_img = bboxes_img.permute(0, 3, 1, 2) # B, C, H, W
+            bboxes_img = batch['bboxes_img'].float() # B, C, H, W
             bboxes_img_multi_res = [F.interpolate(bboxes_img,
                                      scale_factor=float(1/stride),
                                      mode='nearest').flatten(start_dim=2) for stride in self.stride]

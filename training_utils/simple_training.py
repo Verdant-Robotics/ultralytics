@@ -1,3 +1,7 @@
+
+import os
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 from ultralytics import YOLO
 from training_utils import (
     PrepareDataset,
@@ -13,7 +17,6 @@ from training_utils import (
 import os
 import argparse
 from export import Export
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the model")
@@ -53,7 +56,8 @@ if __name__ == "__main__":
         seed=1,
         batch=128,
         name=experiment_name,
-        device=[0],
+        device=[0, 1, 2, 3, 4, 5, 6, 7],
+        # device = [0],
         patience=50,
     )
 
