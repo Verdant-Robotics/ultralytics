@@ -1,7 +1,3 @@
-
-import os
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-
 from ultralytics import YOLO
 from training_utils import (
     PrepareDataset,
@@ -45,19 +41,20 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=0.01,
         lrf=0.01,
-        epochs=300,
+        epochs=2,
+        # epochs=300,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
         mosaic=0.0,
-        shuffler_mosaic=1.0,
+        shuffler_mosaic=0.5,
         close_mosaic=0,
         imgsz=768,
         seed=1,
         batch=128,
         name=experiment_name,
-        device=[0, 1, 2, 3, 4, 5, 6, 7],
-        # device = [0],
+        # device=[0, 1, 2, 3, 4, 5, 6, 7],
+        device = [0],
         patience=50,
     )
 

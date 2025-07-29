@@ -3,32 +3,30 @@ import torch
 
 
 class Shuffler:
-    def __init__(self, tile_shape=None, num_oper_range=None, operations=None, scale=1):
+    def __init__(self, tile_shape=None, num_operations_per_dir=None, operations=None, resolution=1):
         if operations:
             self.operations = operations
         else:
-            self.operations = self._create_operations(tile_shape, num_oper_range, scale)
+            self.operations = self._create_operations(tile_shape, num_operations_per_dir, resolution)
 
-    def _create_operations(self, tile_shape, num_oper_range, scale):
+    def _create_operations(self, tile_shape, num_operations_per_dir, resolution):
         operations = []
-        if num_oper_range == (0, 0):
+        if num_operations_per_dir == 0:
             return operations
         
-        num_oper_x = np.random.randint(num_oper_range[0], num_oper_range[1])
-        num_oper_y = np.random.randint(num_oper_range[0], num_oper_range[1])
         H, W = tile_shape
-        for _ in range(num_oper_x):
-            y_ran = np.random.randint(0, H // scale) * scale
-            delta_x_top_ran = np.random.randint(0, W // scale) * scale
-            delta_x_bottom_ran = np.random.randint(0, W // scale) * scale
+        for _ in range(num_operations_per_dir):
+            y_ran = np.random.randint(0, H // resolution) * resolution
+            delta_x_top_ran = np.random.randint(0, W // resolution) * resolution
+            delta_x_bottom_ran = np.random.randint(0, W // resolution) * resolution
             smax = SliceAndMoveX(
                 y=y_ran, delta_x_top=delta_x_top_ran, delta_x_bottom=delta_x_bottom_ran
             )
             operations.append(smax)
-        for _ in range(num_oper_y):
-            x_ran = np.random.randint(0, W // scale) * scale
-            delta_y_left_ran = np.random.randint(0, H // scale) * scale
-            delta_y_right_ran = np.random.randint(0, H // scale) * scale
+        for _ in range(num_operations_per_dir):
+            x_ran = np.random.randint(0, W // resolution) * resolution
+            delta_y_left_ran = np.random.randint(0, H // resolution) * resolution
+            delta_y_right_ran = np.random.randint(0, H // resolution) * resolution
             smay = SliceAndMoveY(
                 x=x_ran, delta_y_left=delta_y_left_ran, delta_y_right=delta_y_right_ran
             )
@@ -117,19 +115,3 @@ class SliceAndMoveY(SliceAndMove):
             delta_y_left=int(self.delta_first * scale_h),
             delta_y_right=int(self.delta_second * scale_h),
         )
-
-
-class MoveXY:
-    def __init__(self, delta_x, delta_y):
-        self.delta_x = delta_x
-        self.delta_y = delta_y
-
-    def apply(self, tile_tensor):
-        tile_tensor = torch.roll(tile_tensor, shifts=self.delta_x, dims=2)
-        tile_tensor = torch.roll(tile_tensor, shifts=self.delta_y, dims=1)
-        return tile_tensor
-
-    def reverse(self, tile_tensor):
-        tile_tensor = torch.roll(tile_tensor, shifts=-self.delta_y, dims=1)
-        tile_tensor = torch.roll(tile_tensor, shifts=-self.delta_x, dims=2)
-        return tile_tensor

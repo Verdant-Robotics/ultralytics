@@ -13,7 +13,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, is_dir_writeable
 
-from .augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms
+from .augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms, RasterizeBoxes
 from .base import BaseDataset
 from .utils import HELP_URL, LOGGER, get_hash, img2label_paths, verify_image, verify_image_label
 
@@ -142,10 +142,14 @@ class YOLODataset(BaseDataset):
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
             hyp.shuffler_mosaic = hyp.shuffler_mosaic
+            hyp.shuffle_num = hyp.shuffle_num
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
-            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+            transforms = Compose([
+                LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False),
+                RasterizeBoxes()
+                ])
 
         transforms.append(
             Format(bbox_format='xywh',
@@ -176,7 +180,6 @@ class YOLODataset(BaseDataset):
         bbox_format = label.pop('bbox_format')
         normalized = label.pop('normalized')
         bboxes_img = label.pop('bboxes_img', None)
-        # print('update labels info: ', bboxes_img)
         label['instances'] = Instances(bboxes, segments, keypoints, bbox_format=bbox_format, normalized=normalized, bboxes_img=bboxes_img)
         return label
 
@@ -190,14 +193,12 @@ class YOLODataset(BaseDataset):
 
         for i, k in enumerate(keys):
             value = values[i]
-            if k == 'img':
+            if k in ['img', 'is_shuffled']:
                 value = torch.stack(value, 0)
             if k in ['masks', 'keypoints', 'bboxes', 'cls']:
                 value = torch.cat(value, 0)
             if k in ['bboxes_img']: # (C, H, W)
                 value = pad_sequence(value, batch_first=True)
-                # value = torch.stack(value, 0)
-            
             new_batch[k] = value
         new_batch['batch_idx'] = list(new_batch['batch_idx'])
 
