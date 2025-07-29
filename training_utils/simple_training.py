@@ -18,6 +18,7 @@ from export import Export
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the model")
     parser.add_argument("-l", "--load", type=str, default=None, help="Path to the model weights to load. Load the pretrained model")
+    parser.add_argument("-r", "--learning-rate", type=float, default=0.01, help="Learning rate for training")
     parser.add_argument("-d", "--disable-wandb", action="store_true", help="Disable wandb logging")
 
     args = parser.parse_args()
@@ -40,8 +41,8 @@ if __name__ == "__main__":
         task=training_task,
         data="verdant.yaml",
         optimizer='SGD',
-        lr0=0.01,
-        lrf=0.01,
+        lr0=args.learning_rate,
+        lrf=args.learning_rate,
         epochs=300,
         flipud=0.5,
         fliplr=0.5,
