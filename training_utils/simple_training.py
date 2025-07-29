@@ -42,7 +42,7 @@ if __name__ == "__main__":
         data="verdant.yaml",
         optimizer='SGD',
         lr0=args.learning_rate,
-        lrf=args.learning_rate,
+        lrf=0.01,
         epochs=300,
         flipud=0.5,
         fliplr=0.5,
