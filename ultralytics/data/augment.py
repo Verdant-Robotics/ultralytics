@@ -135,6 +135,7 @@ class RasterizeBoxes:
         gt_labels = labels['instances']
         img = labels['img']
         h, w, _ = img.shape
+        gt_labels.convert_bbox(format='xyxy')
         gt_labels.denormalize(w, h)
         gt_bboxes = gt_labels.bboxes
         gt_cls = labels['cls']
@@ -147,7 +148,7 @@ class RasterizeBoxes:
             bboxes_img[y1:y2, x1:x2, int(gt_cls[i])] = 1
         labels['instances'].bboxes_img = bboxes_img
         return labels
-        
+
 
 class CustomMosaic:
     def __init__(self, p, shuffle_num):
