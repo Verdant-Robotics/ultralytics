@@ -185,8 +185,11 @@ class YOLODataset(BaseDataset):
 
     @staticmethod
     def collate_fn(batch):
-        """Collates data samples into batches."""
-        # batch corresponds to labels in augment.py :smileyface:
+        """
+        Collates data samples into batches.
+        Args:
+            batch: referred to as labels in augment.py :smileyface:
+        """
         new_batch = {}
         keys = batch[0].keys()
         values = list(zip(*[list(b.values()) for b in batch]))
@@ -200,8 +203,8 @@ class YOLODataset(BaseDataset):
             if k in ['bboxes_img']: # (C, H, W)
                 value = pad_sequence(value, batch_first=True)
             new_batch[k] = value
-        new_batch['batch_idx'] = list(new_batch['batch_idx'])
 
+        new_batch['batch_idx'] = list(new_batch['batch_idx'])
         for i in range(len(new_batch['batch_idx'])):
             new_batch['batch_idx'][i] += i  # add target image index for build_targets()
         new_batch['batch_idx'] = torch.cat(new_batch['batch_idx'], 0)

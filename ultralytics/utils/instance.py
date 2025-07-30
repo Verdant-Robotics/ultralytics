@@ -217,7 +217,6 @@ class Instances:
         self._bboxes = Bboxes(bboxes=bboxes, format=bbox_format)
         self.keypoints = keypoints
         self.normalized = normalized
-
         self.bboxes_img = bboxes_img
         self.is_shuffled = is_shuffled
 
@@ -314,11 +313,6 @@ class Instances:
             keypoints = self.keypoints[index]
         bboxes = self.bboxes[index]
         bbox_format = self._bboxes.format
-        
-        bboxes_img = None
-        if self.bboxes_img is not None:
-            bboxes_img = self.bboxes_img
-        is_shuffled = self.is_shuffled
 
         return Instances(
             bboxes=bboxes,
@@ -326,8 +320,8 @@ class Instances:
             keypoints=keypoints,
             bbox_format=bbox_format,
             normalized=self.normalized,
-            bboxes_img=bboxes_img,
-            is_shuffled=is_shuffled
+            bboxes_img=self.bboxes_img,
+            is_shuffled=self.is_shuffled
         )
 
     def flipud(self, h):

@@ -531,7 +531,6 @@ class v8PoseSegLoss(v8PoseLoss):
         super().__init__(model)
         self.bce_inside = nn.BCEWithLogitsLoss(reduction='none')
         self.seg_ch_num = model.model[-1].seg_ch_num
-        self.training = model.training
 
     def __call__(self, preds, batch):
         loss = torch.zeros(6, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation
@@ -598,6 +597,8 @@ class v8PoseSegLoss(v8PoseLoss):
 
     def calculate_loss_for_none_shuffled_parts(self, loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz):
         not_shuffled_mask = ~batch['is_shuffled'].squeeze(1).to(self.device)
+        if (not_shuffled_mask == False).all():
+            return loss
     
         gt_bboxes_ns = gt_bboxes[not_shuffled_mask]
         gt_labels_ns = gt_labels[not_shuffled_mask]
@@ -775,7 +776,7 @@ class v8PoseContrastiveLoss(v8PoseLoss):
             keypoints[..., 0] *= imgsz[1]
             keypoints[..., 1] *= imgsz[0]
 
-            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask_ns, target_gt_idx, keypoints, batch_idx,
+            loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
                                                              stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
 
         loss[0] *= self.hyp.box  # box gain

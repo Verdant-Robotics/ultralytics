@@ -138,8 +138,6 @@ class BaseDataset(Dataset):
                     self.labels[i]['segments'] = [segments[si] for si, idx in enumerate(j) if idx]
                 if keypoints is not None:
                     self.labels[i]['keypoints'] = keypoints[j]
-
-                
             if self.single_cls:
                 self.labels[i]['cls'][:, 0] = 0
 
@@ -247,14 +245,11 @@ class BaseDataset(Dataset):
 
     def __getitem__(self, index):
         """Returns transformed label information for given index."""
-        img_label = self.get_image_and_label(index)
-        transformed =  self.transforms(img_label)
-        return transformed
+        return self.transforms(self.get_image_and_label(index))
 
     def get_image_and_label(self, index):
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
-        
         label.pop('shape', None)  # shape is for rect, remove it
         label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(index)
         label['ratio_pad'] = (label['resized_shape'][0] / label['ori_shape'][0],

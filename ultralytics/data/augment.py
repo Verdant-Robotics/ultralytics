@@ -980,7 +980,6 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             perspective=hyp.perspective,
             pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
         )])
-
     flip_idx = dataset.data.get('flip_idx', [])  # for keypoints augmentation
     if dataset.use_keypoints:
         kpt_shape = dataset.data.get('kpt_shape', None)
