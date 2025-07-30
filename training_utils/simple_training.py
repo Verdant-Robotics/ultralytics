@@ -18,6 +18,7 @@ from export import Export
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the model")
     parser.add_argument("-l", "--load", type=str, default=None, help="Path to the model weights to load. Load the pretrained model")
+    parser.add_argument("-r", "--learning-rate", type=float, default=0.01, help="Learning rate for training")
     parser.add_argument("-d", "--disable-wandb", action="store_true", help="Disable wandb logging")
 
     args = parser.parse_args()
@@ -40,14 +41,14 @@ if __name__ == "__main__":
         task=training_task,
         data="verdant.yaml",
         optimizer='SGD',
-        lr0=0.01,
+        lr0=args.learning_rate,
         lrf=0.01,
         epochs=300,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
-        mosaic=0.0,
-        shuffler_mosaic=1.0,
+        mosaic=0.0, # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
+        shuffler_mosaic=0, # For example if shuffler_mosaic = 0.5, roughly half of the batch will be shuffled the other half unshuffled. for the shuffled part only the seg loss gets updated. 
         close_mosaic=0,
         imgsz=768,
         seed=1,

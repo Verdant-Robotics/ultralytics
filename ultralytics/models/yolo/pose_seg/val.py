@@ -1,7 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from pathlib import Path
-
 import numpy as np
 import torch
 
@@ -118,7 +117,7 @@ class PoseSegValidator(PoseValidator):
             seg_logit (B, seg_ch_num, A) - logits for each segmentation class for each anchor
             Pi_list feature list used to construct the anchor points
         Output:
-            seg_results (list of tensors) - each tensor contains anchor points, strides, seg_class, seg_conf
+            seg_results (seg_logits, anchor_points, strides) with shapes (B, C, A), (B, 2, A), (B, 1, A)
         '''
         stride_tensor = self.model.stride
         if type(stride_tensor) is int: # When models are loaded, model.stride is the max stride
@@ -127,29 +126,10 @@ class PoseSegValidator(PoseValidator):
 
         anchor_points, strides = (x.transpose(0, 1) for x in make_anchors(Pi_list, stride_tensor, 0.5))
         bs = Pi_list[0].shape[0]
-        strides = strides.unsqueeze(0).repeat(bs, 1, 1) # (B, 1, A)
-        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1) # (B, 2, A) 
+        strides = strides.unsqueeze(0).repeat(bs, 1, 1)
+        anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1)
+        return (seg_logits, anchor_points, strides)
 
-        seg_mask = (seg_logits > self.args.seg_conf).any(dim=1)
-        seg_results = []
-        for b in range(bs):
-            selected_anchor_points = anchor_points[b, :, seg_mask[b]]
-            selected_strides = strides[b, :, seg_mask[b]]
-            selected_seg = seg_logits[b, :, seg_mask[b]]
-            conf_flags = selected_seg > self.args.seg_conf
-            single_confident = (conf_flags.sum(dim=0) == 1) # Only one seg class is confident for this anchor point. If more are confident, class will be -1
-            seg_class = torch.full((1, selected_seg.shape[1]), fill_value=-1, device=selected_seg.device)
-            seg_class[0, single_confident] = selected_seg.argmax(dim=0)[single_confident]
-            seg_conf = selected_seg.max(dim=0, keepdim=True).values 
-            combined = torch.cat([
-                selected_anchor_points,
-                selected_strides,
-                seg_class,
-                seg_conf,
-            ], dim=0)
-            combined = combined.transpose(0, 1)
-            seg_results.append(combined)
-        return seg_results
 
 
     def plot_predictions(self, batch, predictions, ni):
@@ -171,7 +151,7 @@ class PoseSegValidator(PoseValidator):
                     on_plot=self.on_plot,
                     )
 
-        # plot seg results
+        # plot seg results for one resolution
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
                     cls=cls,
@@ -179,25 +159,6 @@ class PoseSegValidator(PoseValidator):
                     names=self.names,
                     on_plot=self.on_plot,
                     seg_results=seg_results,
-                    res_grid_size=[8]
-                    )
-        
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid16.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    seg_results=seg_results,
-                    res_grid_size=[16]
-                    )
-
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid32.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    seg_results=seg_results,
-                    res_grid_size=[32]
+                    res_grid_size=[8],
+                    enable_highlight=True
                     )
