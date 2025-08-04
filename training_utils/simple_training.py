@@ -47,7 +47,9 @@ if __name__ == "__main__":
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
-        mosaic=0.0,  # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
+        mosaic=0.0, # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
+        shuffler_mosaic=0, # For example if shuffler_mosaic = 0.5, roughly half of the batch will be shuffled the other half unshuffled. for the shuffled part only the seg loss gets updated. 
+        close_mosaic=0,
         imgsz=768,
         seed=1,
         batch=128,

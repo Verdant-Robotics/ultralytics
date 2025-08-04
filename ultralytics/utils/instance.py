@@ -6,7 +6,7 @@ from numbers import Number
 from typing import List
 
 import numpy as np
-
+import torch
 from .ops import ltwh2xywh, ltwh2xyxy, resample_segments, xywh2ltwh, xywh2xyxy, xyxy2ltwh, xyxy2xywh
 
 
@@ -205,7 +205,7 @@ class Instances:
         This class does not perform input validation, and it assumes the inputs are well-formed.
     """
 
-    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format='xywh', normalized=True) -> None:
+    def __init__(self, bboxes, segments=None, keypoints=None, bbox_format='xywh', normalized=True, bboxes_img=None, is_shuffled=np.array([False], dtype=bool)) -> None:
         """
         Args:
             bboxes (ndarray): bboxes with shape [N, 4].
@@ -217,6 +217,8 @@ class Instances:
         self._bboxes = Bboxes(bboxes=bboxes, format=bbox_format)
         self.keypoints = keypoints
         self.normalized = normalized
+        self.bboxes_img = bboxes_img
+        self.is_shuffled = is_shuffled
 
         if keypoints is not None:
             assert len(keypoints) == len(
@@ -311,12 +313,15 @@ class Instances:
             keypoints = self.keypoints[index]
         bboxes = self.bboxes[index]
         bbox_format = self._bboxes.format
+
         return Instances(
             bboxes=bboxes,
             segments=segments,
             keypoints=keypoints,
             bbox_format=bbox_format,
             normalized=self.normalized,
+            bboxes_img=self.bboxes_img,
+            is_shuffled=self.is_shuffled
         )
 
     def flipud(self, h):

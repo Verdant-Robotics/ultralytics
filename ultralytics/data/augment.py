@@ -15,6 +15,8 @@ from ultralytics.utils.instance import Instances
 from ultralytics.utils.metrics import bbox_ioa
 from ultralytics.utils.ops import segment2box
 
+from ultralytics.data.image_operations import Shuffler
+
 from .utils import polygons2masks, polygons2masks_overlap
 
 
@@ -126,6 +128,52 @@ class BaseMixTransform:
     def get_indexes(self):
         """Gets a list of shuffled indexes for mosaic augmentation."""
         raise NotImplementedError
+
+
+class RasterizeBoxes:
+    def __call__(self, labels):
+        gt_labels = labels['instances']
+        img = labels['img']
+        h, w, _ = img.shape
+        gt_labels.convert_bbox(format='xyxy')
+        gt_labels.denormalize(w, h)
+        gt_bboxes = gt_labels.bboxes
+        gt_cls = labels['cls']
+        num_classes = int(gt_cls.max()) + 1 if len(gt_cls) != 0 else 2  # This is a hack. Ideally, this must be 0 instead of 2. But, we have to use this hack because we sometimes get a CUDA index out of bounds error when it's set to 0.
+        bboxes_img = np.zeros((h, w, num_classes))
+        for i in range(gt_bboxes.shape[0]):
+            x1, y1, x2, y2 = gt_bboxes[i, 0], gt_bboxes[i, 1], gt_bboxes[i, 2], gt_bboxes[i, 3]
+            x1, y1 = np.floor([x1, y1]).astype(int)
+            x2, y2 = np.ceil([x2, y2]).astype(int)
+            bboxes_img[y1:y2, x1:x2, int(gt_cls[i])] = 1
+        labels['instances'].bboxes_img = bboxes_img
+        return labels
+
+
+class CustomMosaic:
+    def __init__(self, p, shuffle_num):
+        self.p = p
+        self.shuffle_num = shuffle_num
+        assert 0 < shuffle_num <= 30, 'Please don\'t shuffle the image down to atoms.'
+        assert 0 <= p <= 1.0, f'The probability should be in range [0, 1], but got {p}.'
+
+    def __call__(self, labels):
+        assert labels['instances'].bboxes_img is not None, "Custom mosaic needs bboxes image. Call RasterizeBoxes before calling custom mosaic."
+        if random.random() > self.p:
+            return labels
+
+        img = labels['img']
+        h, w, _ = img.shape
+        bboxes_img = labels['instances'].bboxes_img
+
+        shuffler = Shuffler(tile_shape=(h, w), num_operations_per_dir=self.shuffle_num, resolution=8)
+        shuffled_img = shuffler.shuffle(img)
+        shuffled_bboxes_img = shuffler.shuffle(bboxes_img)
+
+        labels['img'] = shuffled_img
+        labels['instances'].bboxes_img = shuffled_bboxes_img 
+        labels['instances'].is_shuffled = np.array([True], dtype=bool)
+        return labels
 
 
 class Mosaic(BaseMixTransform):
@@ -891,6 +939,11 @@ class Format:
         # Then we can use collate_fn
         if self.batch_idx:
             labels['batch_idx'] = torch.zeros(nl)
+
+        if instances.bboxes_img is not None:
+            bboxes_img = np.ascontiguousarray(instances.bboxes_img.transpose(2, 0, 1))
+            labels['bboxes_img'] = torch.from_numpy(bboxes_img)
+        labels['is_shuffled'] = torch.from_numpy(instances.is_shuffled)
         return labels
 
     def _format_img(self, img):
@@ -936,14 +989,15 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             LOGGER.warning("WARNING ⚠️ No 'flip_idx' array defined in data.yaml, setting augmentation 'fliplr=0.0'")
         elif flip_idx and (len(flip_idx) != kpt_shape[0]):
             raise ValueError(f'data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}')
-
     return Compose([
         pre_transform,
         MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
         Albumentations(p=1.0),
         RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
         RandomFlip(direction='vertical', p=hyp.flipud),
-        RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx)])  # transforms
+        RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx),
+        RasterizeBoxes(), # MUST come before CustomMosaic. If no CustomMosaic, it must be the last!
+        CustomMosaic(p=hyp.shuffler_mosaic, shuffle_num=hyp.shuffle_num)])  # CustomMosaic MUST always be the last!
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------
