@@ -139,7 +139,7 @@ class RasterizeBoxes:
         gt_labels.denormalize(w, h)
         gt_bboxes = gt_labels.bboxes
         gt_cls = labels['cls']
-        num_classes = int(gt_cls.max()) + 1 if len(gt_cls) != 0 else 2
+        num_classes = int(gt_cls.max()) + 1 if len(gt_cls) != 0 else 2  # This is a hack. Ideally, this must be 0 instead of 2. But, we have to use this hack because we sometimes get a CUDA index out of bounds error when it's set to 0.
         bboxes_img = np.zeros((h, w, num_classes))
         for i in range(gt_bboxes.shape[0]):
             x1, y1, x2, y2 = gt_bboxes[i, 0], gt_bboxes[i, 1], gt_bboxes[i, 2], gt_bboxes[i, 3]

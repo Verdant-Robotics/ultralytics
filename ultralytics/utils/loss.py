@@ -590,9 +590,7 @@ class v8PoseSegLoss(v8PoseLoss):
         # TODO: Should collapse bboxes_img if needed depending on C vs seg_ch_num
         target_seg = gt_bboxes_img.permute(0, 2, 1) # B, A, C
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
-        anchor_weights = torch.ones_like(loss_per_anchor)  # (B, A, C)
-        weighted_loss = loss_per_anchor * anchor_weights # (B, A, C)
-        return weighted_loss.mean()
+        return loss_per_anchor.mean()
 
 
     def calculate_loss_for_non_shuffled_parts(self, loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz):
