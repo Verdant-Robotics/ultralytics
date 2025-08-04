@@ -159,7 +159,7 @@ class CustomMosaic:
 
     def __call__(self, labels):
         assert labels['instances'].bboxes_img is not None, "Custom mosaic needs bboxes image. Call RasterizeBoxes before calling custom mosaic."
-        if 1 - random.random() > self.p:
+        if random.random() > self.p:
             return labels
 
         img = labels['img']

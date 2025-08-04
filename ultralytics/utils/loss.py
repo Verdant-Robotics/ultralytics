@@ -549,7 +549,7 @@ class v8PoseSegLoss(v8PoseLoss):
         batch_size = pred_scores.shape[0]
         gt_labels, gt_bboxes, gt_bboxes_img = self.get_gt_targets(batch, batch_size, imgsz)
 
-        loss = self.calculate_loss_for_none_shuffled_parts(loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz)
+        loss = self.calculate_loss_for_non_shuffled_parts(loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz)
         loss[5] = self.calculate_segmentation_loss(pred_seg=pred_seg, gt_bboxes_img=gt_bboxes_img)
 
         loss[0] *= self.hyp.box  # box gain
@@ -595,7 +595,7 @@ class v8PoseSegLoss(v8PoseLoss):
         return weighted_loss.mean()
 
 
-    def calculate_loss_for_none_shuffled_parts(self, loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz):
+    def calculate_loss_for_non_shuffled_parts(self, loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz):
         not_shuffled_mask = ~batch['is_shuffled'].squeeze(1).to(self.device)
         if (not_shuffled_mask == False).all():
             return loss

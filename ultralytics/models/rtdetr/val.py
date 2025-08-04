@@ -34,8 +34,6 @@ class RTDETRDataset(YOLODataset):
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
-            hyp.shuffler_mosaic = hyp.shuffler_mosaic
-            hyp.shuffle_num = hyp.shuffle_num
             transforms = v8_transforms(self, self.imgsz, hyp, stretch=True)
         else:
             # transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), auto=False, scaleFill=True)])
