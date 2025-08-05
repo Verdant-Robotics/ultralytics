@@ -134,7 +134,9 @@ class PoseSegValidator(PoseValidator):
 
     def plot_predictions(self, batch, predictions, ni):
         pred_bbox_kpts = predictions[0]
-        pred_kpts = torch.cat([p[:, 8:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
+        
+        kpt_offset = 4 + self.nc + self.seg_ch_num # xyxy + C + S
+        pred_kpts = torch.cat([p[:, kpt_offset:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
         batch_idx, cls, bboxes = output_to_target(pred_bbox_kpts, max_det=self.args.max_det)
 
         pred_seg, Pi_list  = predictions[1]

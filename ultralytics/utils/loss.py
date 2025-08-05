@@ -552,6 +552,7 @@ class v8PoseSegLoss(v8PoseLoss):
         loss = self.calculate_loss_for_non_shuffled_parts(loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz)
         loss[5] = self.calculate_segmentation_loss(pred_seg=pred_seg, gt_bboxes_img=gt_bboxes_img)
 
+
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
         loss[2] *= self.hyp.kobj  # kobj gain
@@ -592,6 +593,9 @@ class v8PoseSegLoss(v8PoseLoss):
             target_seg = target_seg.mean(dim=-1, keepdim=True)
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
         return loss_per_anchor.mean()
+    
+
+    # def calculate_segmentation_loss_v2(self, )
 
 
     def calculate_loss_for_non_shuffled_parts(self, loss, batch, gt_labels, gt_bboxes, pred_scores, pred_kpts, pred_distri, feats, imgsz):

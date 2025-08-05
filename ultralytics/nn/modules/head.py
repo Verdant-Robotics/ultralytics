@@ -399,7 +399,7 @@ class DetectAndSeg(Detect):
         super().__init__(nc, ch)
         self.no = nc + self.reg_max * 4 + seg_ch_num
         self.seg_ch_num = seg_ch_num
-        c4 = max(16, ch[0] // 4) 
+        c4 = max(16, ch[0] // 4)
         self.cv_seg = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, seg_ch_num, 1)) for x in ch)
 
     def forward(self, x):
@@ -441,7 +441,7 @@ class PoseSeg(DetectAndSeg):
 
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=(), seg_ch_num=1):
         """Initialize YOLO network with default parameters and Convolutional Layers."""
-        super().__init__(nc=nc, ch=ch, seg_ch_num=nc)
+        super().__init__(nc=nc, ch=ch, seg_ch_num=seg_ch_num)
         self.kpt_shape = kpt_shape
         self.nk = kpt_shape[0] * kpt_shape[1]
         c4 = max(ch[0] // 4, self.nk)
