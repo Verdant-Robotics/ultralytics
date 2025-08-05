@@ -587,8 +587,9 @@ class v8PoseSegLoss(v8PoseLoss):
             pred_seg (B, A, seg_ch_num)
             bboxes_img (B, C, A)
         """
-        # TODO: Should collapse bboxes_img if needed depending on C vs seg_ch_num
         target_seg = gt_bboxes_img.permute(0, 2, 1) # B, A, C
+        if self.seg_ch_num == 1:
+            target_seg = target_seg.mean(dim=-1, keepdim=True)
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
         return loss_per_anchor.mean()
 
