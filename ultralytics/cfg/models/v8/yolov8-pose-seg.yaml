@@ -1,7 +1,7 @@
 # Parameters
 nc: 1  # WILL BE OVERRIDDEN. Number of classes
 kpt_shape: [17, 3]  # WILL BE OVERRIDDEN. Number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
-seg_ch_num: 1 # if 1, it will collapse classes
+seg_ch_num: 2
 
 scales: # model compound scaling constants, i.e. 'model=yolov8n-pose.yaml' will call yolov8-pose.yaml with scale 'n'
   # [depth, width, max_channels]
