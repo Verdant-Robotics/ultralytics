@@ -27,7 +27,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(f"Model weights initialized from: {args.load if args.load else 'scratch'}")
-    print(f"Learning rate: {args.learning_rate}, Epochs: {args.epochs}, Patience: {args.patience}, Batch size: {args.batch}")
+    print(f"Learning rate: {args.learning_rate}, Epochs: {args.epochs}, Patience: {args.patience}, Batch size: {args.batch_size}")
 
     PrepareDataset(coco_classes_file, dataset_yaml_path, training_task)
 
