@@ -44,7 +44,6 @@ class PoseSegValidator(PoseValidator):
         """
         Apply non-maximum suppression and return detections with high confidence scores + Map anchor_points to seg classes
         """
-        breakpoint()
         return ops.non_max_suppression(prediction=preds,
                                        nc=self.nc,
                                        conf_thres=self.args.conf,
@@ -137,7 +136,6 @@ class PoseSegValidator(PoseValidator):
     def plot_predictions(self, batch, predictions, ni):
         pred_bbox_kpts = predictions[0]
         kpt_offset = 4 + self.nc + self.seg_ch_num + 1 # xyxy + C + S + 1(seg_obj)
-        breakpoint()
         
         pred_kpts = torch.cat([p[:, kpt_offset:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
         

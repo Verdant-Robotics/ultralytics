@@ -444,7 +444,7 @@ class PoseSeg(DetectAndSeg):
 
     def __init__(self, nc=80, kpt_shape=(17, 3), ch=(), seg_ch_num=1):
         """Initialize YOLO network with default parameters and Convolutional Layers."""
-        super().__init__(nc=nc, ch=ch, seg_ch_num=seg_ch_num)
+        super().__init__(nc=nc, ch=ch, seg_ch_num=nc)
         self.kpt_shape = kpt_shape
         self.nk = kpt_shape[0] * kpt_shape[1]
         c4 = max(ch[0] // 4, self.nk)
@@ -465,7 +465,6 @@ class PoseSeg(DetectAndSeg):
         bs = x[0].shape[0]
         kpt = torch.cat([self.cv4[i](x[i]).view(bs, self.nk, -1) for i in range(self.nl)], -1)
         x = self.detect(self, x)
-        breakpoint()
         if self.training:
             return x, kpt
 
