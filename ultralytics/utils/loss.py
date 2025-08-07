@@ -597,6 +597,10 @@ class v8PoseSegLoss(v8PoseLoss):
         if pred_seg.shape[2] == 1:
             target_seg = target_seg.mean(dim=-1, keepdim=True)
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
+        
+        if pred_seg.shape[2] != 1:
+            loss_per_anchor[target_seg==0] = 0
+        
         return loss_per_anchor.mean()
 
 
