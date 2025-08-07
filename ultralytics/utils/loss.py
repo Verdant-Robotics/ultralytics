@@ -604,7 +604,7 @@ class v8PoseSegLoss(v8PoseLoss):
         shuffled_mask = batch['is_shuffled'].squeeze(1).to(self.device)
         gt_bboxes_img_s = gt_bboxes_img[shuffled_mask]
         pred_seg_obj_s = pred_seg_obj[shuffled_mask]
-        loss[6] = self.calculate_segmentation_loss(pred_seg=pred_seg_obj_s, gt_bboxes_img=gt_bboxes_img_s)
+        loss[5] = self.calculate_segmentation_loss(pred_seg=pred_seg_obj_s, gt_bboxes_img=gt_bboxes_img_s)
         return loss
 
 
@@ -656,7 +656,7 @@ class v8PoseSegLoss(v8PoseLoss):
                                                              stride_tensor, target_bboxes_ns, pred_kpts_ns, batch['ignore_kpt'])
         pred_seg_clsfy_ns = pred_seg_clsfy[not_shuffled_mask]
         gt_bboxes_img_ns = gt_bboxes_img[not_shuffled_mask]
-        loss[5] = self.calculate_segmentation_loss(pred_seg=pred_seg_clsfy_ns, gt_bboxes_img=gt_bboxes_img_ns)
+        loss[6] = self.calculate_segmentation_loss(pred_seg=pred_seg_clsfy_ns, gt_bboxes_img=gt_bboxes_img_ns)
         return loss
 
 
