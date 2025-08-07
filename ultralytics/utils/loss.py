@@ -599,7 +599,10 @@ class v8PoseSegLoss(v8PoseLoss):
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
         
         if pred_seg.shape[2] != 1:
-            loss_per_anchor[target_seg==0] = 0
+            C = loss_per_anchor.shape[2]
+            zero_mask = (target_seg == 0).all(dim=2).unsqueeze(2) # B, A, 1
+            zero_mask_expanded = zero_mask.expand(-1, -1, C) # B, A, C
+            loss_per_anchor[zero_mask_expanded] = 0
         
         return loss_per_anchor.mean()
 
