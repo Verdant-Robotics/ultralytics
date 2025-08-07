@@ -44,17 +44,20 @@ if __name__ == "__main__":
         lr0=args.learning_rate,
         lrf=0.01,
         epochs=300,
+        # epochs=2,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
         mosaic=0.0, # Please set this to 0.0 TODO: Fix the issue with mosaic and keypoint detection
-        shuffler_mosaic=0, # For example if shuffler_mosaic = 0.5, roughly half of the batch will be shuffled the other half unshuffled. for the shuffled part only the seg loss gets updated. 
+        shuffler_mosaic=0.5, # For example if shuffler_mosaic = 0.5, roughly half of the batch will be shuffled the other half unshuffled. for the shuffled part only the seg loss gets updated. 
         close_mosaic=0,
         imgsz=768,
+        # imgsz=32,
         seed=1,
         batch=128,
         name=experiment_name,
         device=[0, 1, 2, 3, 4, 5, 6, 7],
+        # device=[0],
         patience=50,
     )
 
