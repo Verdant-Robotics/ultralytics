@@ -35,7 +35,7 @@ class PoseSegValidator(PoseValidator):
         """
         Pi_list = preds[1][0]
         x_flat = preds[0]
-        seg_obj = x_flat[:, 6:6+1, :]
+        seg_obj = x_flat[:, 6:7, :]
         seg_logits = x_flat[:, 7:7+self.seg_ch_num, :]
         return seg_obj, seg_logits, Pi_list
 
@@ -111,7 +111,7 @@ class PoseSegValidator(PoseValidator):
             # if self.args.save_txt:
             #    save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
 
-    def map_anchors_to_seg(self, seg_logits, Pi_list):
+    def get_anchors_and_strides(self, Pi_list):
         '''
         Maps each anchor to its corresponding segmentation class.
         Input:
@@ -129,20 +129,19 @@ class PoseSegValidator(PoseValidator):
         bs = Pi_list[0].shape[0]
         strides = strides.unsqueeze(0).repeat(bs, 1, 1)
         anchor_points = anchor_points.unsqueeze(0).repeat(bs, 1, 1)
-        return (seg_logits, anchor_points, strides)
-
+        return (anchor_points, strides)
 
 
     def plot_predictions(self, batch, predictions, ni):
         pred_bbox_kpts = predictions[0]
         kpt_offset = 4 + self.nc + self.seg_ch_num + 1 # xyxy + C + S + 1(seg_obj)
-        
         pred_kpts = torch.cat([p[:, kpt_offset:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
-        
         batch_idx, cls, bboxes = output_to_target(pred_bbox_kpts, max_det=self.args.max_det)
-
         pred_seg_obj, pred_seg_clsfy, Pi_list  = predictions[1]
-        seg_results = self.map_anchors_to_seg(seg_logits=pred_seg_clsfy, Pi_list=Pi_list)
+
+        anchors, strides = self.get_anchors_and_strides(Pi_list=Pi_list)
+        pred_seg = pred_seg_clsfy * (pred_seg_obj > 0.4).float()
+        seg_results = (pred_seg, anchors, strides)
 
         # plot bbox and kpts
         plot_images(images=batch['img'],
