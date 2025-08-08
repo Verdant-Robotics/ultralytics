@@ -6,7 +6,7 @@ from ultralytics.models import yolo
 from ultralytics.nn.tasks import PoseSegModel
 from ultralytics.utils import DEFAULT_CFG, LOGGER
 from ultralytics.utils.plotting import plot_images, plot_results
-
+from ultralytics.models.yolo.pose_seg.callbacks import on_train_batch_start, on_train_batch_end, on_train_epoch_end
 
 class PoseSegTrainer(yolo.detect.DetectionTrainer):
     """
@@ -32,6 +32,11 @@ class PoseSegTrainer(yolo.detect.DetectionTrainer):
         if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
             LOGGER.warning("WARNING ⚠️ Apple MPS known Pose bug. Recommend 'device=cpu' for Pose models. "
                            'See https://github.com/ultralytics/ultralytics/issues/4031.')
+        
+        self.add_callback('on_train_batch_start', on_train_batch_start)
+        self.add_callback('on_train_batch_end', on_train_batch_end)
+        self.add_callback('on_train_epoch_end', on_train_epoch_end)
+
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Get pose estimation model with specified configuration and weights."""
@@ -45,6 +50,7 @@ class PoseSegTrainer(yolo.detect.DetectionTrainer):
         """Sets keypoints shape attribute of PoseModel."""
         super().set_model_attributes()
         self.model.kpt_shape = self.data['kpt_shape']
+
 
     def get_validator(self):
         """Returns an instance of the PoseValidator class for validation."""

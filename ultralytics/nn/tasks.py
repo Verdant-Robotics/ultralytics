@@ -256,7 +256,15 @@ class BaseModel(nn.Module):
             self.criterion = self.init_criterion()
 
         preds = self.forward(batch['img']) if preds is None else preds
-        return self.criterion(preds, batch)
+
+        # TODO: Implement per class 
+        feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
+        feats_d = [feat.detach() for feat in feats]
+        pred_kpts_d = pred_kpts.detach()
+        preds_d = (feats_d, pred_kpts_d)
+
+        return self.criterion(preds, batch), preds_d
+
 
     def init_criterion(self):
         """Initialize the loss criterion for the BaseModel."""
