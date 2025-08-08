@@ -398,10 +398,7 @@ class BaseTrainer:
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
-
-                    loss_output, preds = self.model(batch)
-                    self.loss, self.loss_items = loss_output
-                    self.preds = preds
+                    self.loss, self.loss_items = self.model(batch)
 
                     if RANK != -1:
                         self.loss *= world_size
