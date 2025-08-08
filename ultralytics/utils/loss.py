@@ -588,38 +588,51 @@ class v8PoseSegLoss(v8PoseLoss):
         return gt_labels, gt_bboxes, gt_bboxes_img
 
 
-    def calculate_segmentation_loss(self, pred_seg, gt_bboxes_img):
+    def calculate_segmentation_obj_loss(self, pred_seg, gt_bboxes_img):
         """
-            pred_seg (B, A, seg_ch_num)
+            pred_seg (B, A, 1)
             bboxes_img (B, C, A)
         """
         target_seg = gt_bboxes_img.permute(0, 2, 1) # B, A, C
-        if pred_seg.shape[2] == 1:
-            target_seg = target_seg.mean(dim=-1, keepdim=True)
-        loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
-        
-        if pred_seg.shape[2] != 1:
-            C = loss_per_anchor.shape[2]
-            zero_mask = (target_seg == 0).all(dim=2).unsqueeze(2) # B, A, 1
-            zero_mask_expanded = zero_mask.expand(-1, -1, C) # B, A, C
-            loss_per_anchor[zero_mask_expanded] = 0
-        
+        target_seg = target_seg.mean(dim=-1, keepdim=True)
+        loss_per_anchor = self.bce_inside(pred_seg, target_seg)
         return loss_per_anchor.mean()
+
+
+    def calculate_segmentation_conditional_cls_loss(self, pred_seg, gt_bboxes_img):
+        """
+            pred_seg (B, A, C)
+            bboxes_img (B, C, A)
+        """
+        target_seg = gt_bboxes_img.permute(0, 2, 1) # B, A, C
+        C = pred_seg.shape[2]
+        loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)        
+        zero_mask = (target_seg == 0).all(dim=2).unsqueeze(2) # B, A, 1
+        zero_mask_expanded = zero_mask.expand(-1, -1, C) # B, A, C
+        loss_per_anchor[zero_mask_expanded] = 0
+        return loss_per_anchor.mean()
+
+    
+    # def calculate_segmentation_cls_loss(self, pred_seg, gt_bboxes_img):
+    #     """
+    #         pred_seg (B, A, C)
+    #         bboxes_img (B, C, A)
+    #     """
+    #     target_seg = gt_bboxes_img.permute(0, 2, 1) # B, A, C
+    #     loss_per_anchor = self.bce_inside(pred_seg, target_seg)
+    #     return loss_per_anchor.mean()
 
 
     def calculate_loss_for_shuffled_parts(self, loss, batch, gt_bboxes_img, pred_seg_obj):
         shuffled_mask = batch['is_shuffled'].squeeze(1).to(self.device)
         gt_bboxes_img_s = gt_bboxes_img[shuffled_mask]
         pred_seg_obj_s = pred_seg_obj[shuffled_mask]
-        loss[5] = self.calculate_segmentation_loss(pred_seg=pred_seg_obj_s, gt_bboxes_img=gt_bboxes_img_s)
+        loss[5] = self.calculate_segmentation_obj_loss(pred_seg=pred_seg_obj_s, gt_bboxes_img=gt_bboxes_img_s)
         return loss
 
 
     def calculate_loss_for_non_shuffled_parts(self, loss, batch, gt_labels, gt_bboxes, gt_bboxes_img, pred_scores, pred_kpts, pred_distri, pred_seg_clsfy, feats, imgsz):
         not_shuffled_mask = ~batch['is_shuffled'].squeeze(1).to(self.device)
-        if (not_shuffled_mask == False).all():
-            return loss
-    
         gt_bboxes_ns = gt_bboxes[not_shuffled_mask]
         gt_labels_ns = gt_labels[not_shuffled_mask]
         mask_gt_ns = gt_bboxes_ns.sum(2, keepdim=True).gt_(0)
@@ -663,7 +676,7 @@ class v8PoseSegLoss(v8PoseLoss):
                                                              stride_tensor, target_bboxes_ns, pred_kpts_ns, batch['ignore_kpt'])
         pred_seg_clsfy_ns = pred_seg_clsfy[not_shuffled_mask]
         gt_bboxes_img_ns = gt_bboxes_img[not_shuffled_mask]
-        loss[6] = self.calculate_segmentation_loss(pred_seg=pred_seg_clsfy_ns, gt_bboxes_img=gt_bboxes_img_ns)
+        loss[6] = self.calculate_segmentation_conditional_cls_loss(pred_seg=pred_seg_clsfy_ns, gt_bboxes_img=gt_bboxes_img_ns)
         return loss
 
 
