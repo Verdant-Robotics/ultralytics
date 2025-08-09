@@ -996,8 +996,8 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
         RandomFlip(direction='vertical', p=hyp.flipud),
         RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx),
-        RasterizeBoxes(), # MUST come before CustomMosaic. If no CustomMosaic, it must be the last!
-        CustomMosaic(p=hyp.shuffler_mosaic, shuffle_num=hyp.shuffle_num)])  # CustomMosaic MUST always be the last!
+        RasterizeBoxes(), # It must be the last!
+        ])
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------

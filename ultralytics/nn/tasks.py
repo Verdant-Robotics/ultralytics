@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from ultralytics.nn.modules import (AIFI, C1, C2, C3, C3TR, SPP, SPPF, Bottleneck, BottleneckCSP, C2f, C3Ghost, C3x,
                                     Classify, Concat, Conv, Conv2, ConvTranspose, Detect, DetectContrastive, 
@@ -375,6 +376,92 @@ class PoseSegModel(PoseModel):
     def __init__(self, cfg='yolov8n-pose-seg.yaml', ch=3, nc=None, data_kpt_shape=(None, None), verbose=True):
         super().__init__(cfg=cfg, ch=ch, nc=nc, data_kpt_shape=data_kpt_shape, verbose=verbose)
         self.seg_ch_num = self.yaml.get('seg_ch_num')
+
+
+    def forward(self, x, *args, **kwargs):
+        """
+        Forward pass of the model on a single scale. Wrapper for `_forward_once` method.
+
+        Args:
+            x (torch.Tensor | dict): The input image tensor or a dict including image tensor and gt labels.
+
+        Returns:
+            (torch.Tensor): The output of the network.
+        """
+        if isinstance(x, dict):  # for cases of training and validating while training.
+            return self.loss(x, *args, **kwargs)
+        return self.predict(x, *args, **kwargs)
+    
+
+    def loss(self, batch, preds=None):
+        """
+        Compute loss.
+
+        Args:
+            batch (dict): Batch to compute loss on
+            preds (torch.Tensor | List[torch.Tensor]): Predictions.
+        """
+        if not hasattr(self, 'criterion'):
+            self.criterion = self.init_criterion()
+        
+        if preds:
+            assert self.training is False
+            return self.criterion(preds, batch)
+
+        from ultralytics.data.image_operations import Shuffler
+        from copy import deepcopy        
+
+        # breakpoint()
+        # (Pdb) batch['img'].shape torch.Size([3, 3, 768, 768])
+        # B, C, 768, 768
+
+
+        batch['is_shuffled'] = torch.zeros((batch['img'].shape[0], 1), dtype=torch.bool)
+        batch['unshuffled'] = torch.zeros((batch['img'].shape[0], 1), dtype=torch.bool)
+        
+        min_stride = int(self.stride.min())
+        anchor_len = self.args.imgsz // min_stride
+
+        # anchor_shufflers = [
+        #     Shuffler(tile_shape=(anchor_len, anchor_len), num_oper=self.args.shuffle_num)
+        #     for _ in range(batch['img'].shape[0])
+        # ]
+        # img_shufflers = [s.scale((min_stride, min_stride)) for s in anchor_shufflers]
+
+        anchor_shuffler =  Shuffler(tile_shape=(anchor_len, anchor_len), num_oper=self.args.shuffle_num)
+        img_shuffler = anchor_shuffler.scale((min_stride, min_stride))
+        
+        
+        batch_shuffled = deepcopy(batch)
+        
+        # for i, shuffler in enumerate(img_shufflers):
+        batch_shuffled['img'] = img_shuffler.shuffle(batch_shuffled['img'])
+        batch_shuffled['bboxes_img'] = img_shuffler.shuffle(batch_shuffled['bboxes_img'])
+        batch_shuffled['is_shuffled'] = torch.ones((batch_shuffled['img'].shape[0], 1), dtype=torch.bool)
+
+        combined_batch = {}
+        for k in batch.keys():
+            if k in ['im_file', 'ignore_kpt', 'ori_shape', 'resized_shape']:
+                combined_batch[k] = batch[k] + batch_shuffled[k]
+            if k in ['img', 'cls', 'bboxes', 'keypoints', 'bboxes_img', 'is_shuffled']:
+                combined_batch[k] = torch.cat((batch[k], batch_shuffled[k]), dim=0)
+            if k in ['batch_idx']:
+                combined_batch['batch_idx'] = torch.cat((batch['batch_idx'], batch_shuffled['batch_idx'] + batch['batch_idx'].max() + 1), dim=0)
+
+        combined_batch['unshuffled'] = torch.zeros((combined_batch['img'].shape[0], 1), dtype=torch.bool)
+
+        preds_combined = self.forward(combined_batch['img'])
+        feats, pred_kpts = preds_combined if isinstance(preds_combined[0], list) else preds_combined[1]
+        _, _, pred_seg_obj, _ = feats[0].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W        
+        shuffled_preds = pred_seg_obj[combined_batch['is_shuffled'].squeeze(1)]
+        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_preds)
+
+        combined_batch['unshuffled_bboxes_img'] = torch.zeros_like(pred_seg_obj)
+        combined_batch['unshuffled_bboxes_img'][combined_batch['is_shuffled'].squeeze(1)] = deshuffled_seg_obj
+        combined_batch['unshuffled'][combined_batch['is_shuffled'].squeeze(1)] = True
+
+        return self.criterion(preds_combined, combined_batch)
+
 
     def init_criterion(self):
         return v8PoseSegLoss(self)
