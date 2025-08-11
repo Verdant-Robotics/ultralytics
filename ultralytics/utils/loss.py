@@ -533,7 +533,7 @@ class v8PoseSegLoss(v8PoseLoss):
         self.seg_ch_num = model.model[-1].seg_ch_num
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(7, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation_obj, segmentation_clsfy 
+        loss = torch.zeros(8, device=self.device) # box, cls, dfl, kpt_location, kpt_visibility, segmentation_obj, segmentation_clsfy, segmentation_obj_unshuffled
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
         pred_distri, pred_scores, pred_seg_obj, pred_seg_clsfy = all_preds.split((self.reg_max * 4, self.nc, 1, self.seg_ch_num), 1)
@@ -550,13 +550,16 @@ class v8PoseSegLoss(v8PoseLoss):
         batch_size = pred_scores.shape[0]
         gt_labels, gt_bboxes, gt_bboxes_img = self.get_gt_targets(batch, batch_size, imgsz)
 
+
         loss = self.calculate_loss_for_non_shuffled_parts(loss=loss, batch=batch, gt_labels=gt_labels, gt_bboxes=gt_bboxes,
                                                           gt_bboxes_img=gt_bboxes_img, pred_scores=pred_scores, pred_kpts=pred_kpts,
                                                           pred_distri=pred_distri, pred_seg_clsfy=pred_seg_clsfy, feats=feats, imgsz=imgsz)
 
         loss = self.calculate_loss_for_shuffled_parts(loss=loss, batch=batch, pred_seg_obj=pred_seg_obj, gt_bboxes_img=gt_bboxes_img)
 
-        loss = self.calculate_loss_for_unshuffled_parts(loss=loss, batch=batch, pred_seg_obj=pred_seg_obj, gt_bboxes_img=gt_bboxes_img)
+    
+        if batch.get('is_unshuffled') is not None:
+            loss = self.calculate_loss_for_unshuffled_parts(loss=loss, batch=batch, pred_seg_obj=pred_seg_obj)
 
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
@@ -565,6 +568,7 @@ class v8PoseSegLoss(v8PoseLoss):
         loss[4] *= self.hyp.dfl  # dfl gain
         loss[5] *= self.hyp.seg  # seg obj gain
         loss[6] *= self.hyp.seg  # seg clsfy gain
+        loss[7] *= self.hyp.seg  # seg obj gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
@@ -614,15 +618,17 @@ class v8PoseSegLoss(v8PoseLoss):
         loss_per_anchor[zero_mask_expanded] = 0
         return loss_per_anchor.mean()
 
-    def calculate_loss_for_unshuffled_parts(self, loss, batch, gt_bboxes_img, pred_seg_obj):
-        unshuffled = batch.get("unshuffled")
-        if unshuffled is not None:
-            deshuffled_mask = batch.get("unshuffled").squeeze(1).to(self.device)
+
+
+    def calculate_loss_for_unshuffled_parts(self, loss, batch, pred_seg_obj):
+        is_unshuffled_mask = batch.get("is_unshuffled").squeeze(-1)
+        unshuffled_bboxes_img_res = batch['unshuffled_bboxes_img'][is_unshuffled_mask] # B, 1, A
+        target_seg = unshuffled_bboxes_img_res.permute(0, 2, 1)        
+        pred_seg = pred_seg_obj[is_unshuffled_mask]
+        loss_per_anchor = self.bce_inside(pred_seg, target_seg)
+        loss[7] = loss_per_anchor.mean()
         return loss
-        # gt_bboxes_img_d = gt_bboxes_img[deshuffled_mask]
-        # pred_seg_obj_d = pred_seg_obj[deshuffled_mask]
-        # loss[5] = self.calculate_segmentation_obj_loss(pred_seg=pred_seg_obj_d, gt_bboxes_img=gt_bboxes_img_d)
-        # return loss 
+
 
 
     def calculate_loss_for_shuffled_parts(self, loss, batch, gt_bboxes_img, pred_seg_obj):
