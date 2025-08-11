@@ -419,7 +419,6 @@ class PoseSegModel(PoseModel):
         anchor_len = self.args.imgsz // min_stride
         anchor_shuffler =  Shuffler(tile_shape=(anchor_len, anchor_len), num_oper=self.args.shuffle_num)
         img_shuffler = anchor_shuffler.scale((min_stride, min_stride))
-        
         batch['is_shuffled'] = torch.zeros((batch['img'].shape[0], 1), dtype=torch.bool)        
         
         batch_shuffled = deepcopy(batch)
@@ -438,9 +437,10 @@ class PoseSegModel(PoseModel):
 
         preds_combined = self.forward(combined_batch['img'])
         feats, pred_kpts = preds_combined if isinstance(preds_combined[0], list) else preds_combined[1]
-        _, _, pred_seg_obj, _ = feats[0].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W     
+        _, _, pred_seg_obj, _ = feats[0].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W
+
         shuffled_preds = pred_seg_obj[combined_batch['is_shuffled'].squeeze(1)]
-        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_preds)
+        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_preds.detach())
 
         res0_deshuffled_seg_obj = deshuffled_seg_obj.flatten(start_dim=2)
         res1_deshuffled_seg_obj = F.interpolate(deshuffled_seg_obj, size=(feats[1].shape[2], feats[1].shape[3]), mode='nearest').flatten(start_dim=2)
@@ -449,7 +449,7 @@ class PoseSegModel(PoseModel):
 
         combined_batch['unshuffled_bboxes_img'] = torch.zeros((combined_batch['img'].shape[0], 1, res_combined_deshuffled_seg_obj.shape[2]), dtype=torch.float32, device=res_combined_deshuffled_seg_obj.device)
         combined_batch['unshuffled_bboxes_img'][combined_batch['is_shuffled'].squeeze(1)] = res_combined_deshuffled_seg_obj
-        
+
         combined_batch['is_unshuffled'] = torch.zeros((combined_batch['img'].shape[0], 1), dtype=torch.bool)
         combined_batch['is_unshuffled'][combined_batch['is_shuffled'].squeeze(1)] = True
 

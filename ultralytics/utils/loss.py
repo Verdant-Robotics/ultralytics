@@ -526,6 +526,11 @@ class v8PoseLoss(v8DetectionLoss):
 
 
 class v8PoseSegLoss(v8PoseLoss):
+    class SEG_LOSS_ENUM:
+        shuffled_obj = 5
+        non_shuffled_cls = 6
+        unshuffled_obj = 7
+
 
     def __init__(self, model):
         super().__init__(model)
@@ -612,7 +617,7 @@ class v8PoseSegLoss(v8PoseLoss):
         """
         target_seg = gt_bboxes_img.permute(0, 2, 1) # B, A, C
         C = pred_seg.shape[2]
-        loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)        
+        loss_per_anchor = self.bce_inside(pred_seg, target_seg)  # (B, A, C)
         zero_mask = (target_seg == 0).all(dim=2).unsqueeze(2) # B, A, 1
         zero_mask_expanded = zero_mask.expand(-1, -1, C) # B, A, C
         loss_per_anchor[zero_mask_expanded] = 0
@@ -623,8 +628,11 @@ class v8PoseSegLoss(v8PoseLoss):
     def calculate_loss_for_unshuffled_parts(self, loss, batch, pred_seg_obj):
         is_unshuffled_mask = batch.get("is_unshuffled").squeeze(-1)
         unshuffled_bboxes_img_res = batch['unshuffled_bboxes_img'][is_unshuffled_mask] # B, 1, A
-        target_seg = unshuffled_bboxes_img_res.permute(0, 2, 1)        
-        pred_seg = pred_seg_obj[is_unshuffled_mask]
+        target_seg = unshuffled_bboxes_img_res.permute(0, 2, 1)
+
+        non_shuffled_mask = ~batch.get("is_shuffled").squeeze(-1)
+        pred_seg = pred_seg_obj[non_shuffled_mask]
+
         loss_per_anchor = self.bce_inside(pred_seg, target_seg)
         loss[7] = loss_per_anchor.mean()
         return loss
