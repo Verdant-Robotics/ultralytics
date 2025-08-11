@@ -24,6 +24,9 @@ from ultralytics.utils.torch_utils import (fuse_conv_and_bn, fuse_deconv_and_bn,
                                            make_divisible, model_info, scale_img, time_sync)
 from ultralytics.utils.ops import xywh2xyxy
 
+from ultralytics.data.image_operations import Shuffler
+
+
 try:
     import thop
 except ImportError:
@@ -379,15 +382,6 @@ class PoseSegModel(PoseModel):
 
 
     def forward(self, x, *args, **kwargs):
-        """
-        Forward pass of the model on a single scale. Wrapper for `_forward_once` method.
-
-        Args:
-            x (torch.Tensor | dict): The input image tensor or a dict including image tensor and gt labels.
-
-        Returns:
-            (torch.Tensor): The output of the network.
-        """
         if isinstance(x, dict):  # for cases of training and validating while training.
             return self.loss(x, *args, **kwargs)
         return self.predict(x, *args, **kwargs)
@@ -408,19 +402,12 @@ class PoseSegModel(PoseModel):
             assert self.training is False
             return self.criterion(preds, batch)
 
-        from ultralytics.data.image_operations import Shuffler
-        from copy import deepcopy        
-
-        # breakpoint()
-        # (Pdb) batch['img'].shape torch.Size([3, 3, 768, 768])
-        # B, C, 768, 768
-
         min_stride = int(self.stride.min())
         anchor_len = self.args.imgsz // min_stride
         anchor_shuffler =  Shuffler(tile_shape=(anchor_len, anchor_len), num_oper=self.args.shuffle_num)
         img_shuffler = anchor_shuffler.scale((min_stride, min_stride))
-        batch['is_shuffled'] = torch.zeros((batch['img'].shape[0], 1), dtype=torch.bool)        
-        
+        batch['is_shuffled'] = torch.zeros((batch['img'].shape[0], 1), dtype=torch.bool)
+
         batch_shuffled = deepcopy(batch)
         batch_shuffled['img'] = img_shuffler.shuffle(batch_shuffled['img'])
         batch_shuffled['bboxes_img'] = img_shuffler.shuffle(batch_shuffled['bboxes_img'])
@@ -440,7 +427,7 @@ class PoseSegModel(PoseModel):
         _, _, pred_seg_obj, _ = feats[0].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W
 
         shuffled_preds = pred_seg_obj[combined_batch['is_shuffled'].squeeze(1)]
-        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_preds.detach())
+        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_preds.detach()).sigmoid()
 
         res0_deshuffled_seg_obj = deshuffled_seg_obj.flatten(start_dim=2)
         res1_deshuffled_seg_obj = F.interpolate(deshuffled_seg_obj, size=(feats[1].shape[2], feats[1].shape[3]), mode='nearest').flatten(start_dim=2)
