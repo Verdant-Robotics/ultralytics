@@ -148,7 +148,7 @@ class YOLODataset(BaseDataset):
         else:
             transforms = Compose([
                 LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False),
-                RasterizeBoxes() # Must be the last!
+                # RasterizeBoxes() # Must be the last!
                 ])
 
         transforms.append(

@@ -3,6 +3,7 @@
 import contextlib
 from copy import deepcopy
 from pathlib import Path
+from ultralytics.utils.ops import crop_mask, xywh2xyxy
 
 import torch
 import torch.nn as nn
@@ -17,7 +18,9 @@ from ultralytics.nn.modules import (AIFI, C1, C2, C3, C3TR, SPP, SPPF, Bottlenec
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, colorstr, emojis, yaml_load
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
 from ultralytics.utils.loss import (v8ClassificationLoss, v8DetectionLoss, v8PoseLoss, v8PoseContrastiveLoss, 
-                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss, v8PoseSegLoss
+                                    v8PoseMultiClsHeadsLoss, v8PoseTunableHeadLoss, v8SegmentationLoss,
+                                    v8PSLPose, v8PSLSegObj, v8PSLSegCls
+
                                     )
 from ultralytics.utils.plotting import feature_visualization
 from ultralytics.utils.torch_utils import (fuse_conv_and_bn, fuse_deconv_and_bn, initialize_weights, intersect_dicts,
@@ -397,6 +400,28 @@ class PoseSegModel(PoseModel):
         return anchor_shuffler, img_shuffler
 
 
+
+    def rasterize_boxes(self, img, gt_bboxes, gt_cls, batch_idx):
+        '''
+        gt_bboxes T, 4
+        batch_idx maps T to b_idx
+        '''
+        min_stride = int(self.stride.min())
+        B, _, img_H, img_W = img.shape
+        anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
+
+        gt_bboxes = xywh2xyxy(gt_bboxes.mul_(torch.Tensor([anchor_H, anchor_W, anchor_H, anchor_W]).to(gt_bboxes.device))) # T, 4
+        bboxes_img = torch.zeros((B, self.nc, anchor_H, anchor_W), device=img.device) # B, C, H, W
+
+        for d_i in range(gt_bboxes.shape[0]):
+            x1, y1, x2, y2 = gt_bboxes[d_i, :4]
+            x1, y1 = torch.floor(x1).long(), torch.floor(y1).long()
+            x2, y2 = torch.ceil(x2).long(), torch.ceil(y2).long()
+            b_idx = batch_idx[d_i].long()
+            bboxes_img[b_idx, int(gt_cls[d_i]), y1:y2, x1:x2] = 1
+        return bboxes_img
+
+
     def loss(self, batch, preds=None):
         """
         Compute loss.
@@ -410,8 +435,17 @@ class PoseSegModel(PoseModel):
         
         if preds:
             assert self.training is False
-            return self.criterion(preds, batch)
-        
+            box_kpt_loss = self.criterion['bbox_kpt'](preds, batch)
+
+            batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
+            seg_cls_loss = self.criterion['seg_cls'](preds, batch)
+
+            seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # To avoid running into errors
+            loss_sum = box_kpt_loss[0] + seg_cls_loss[0]
+            loss_items =  torch.cat([box_kpt_loss[1], seg_cls_loss[1], seg_obj_loss_item])
+            return loss_sum, loss_items
+
+
         anchor_shuffler, img_shuffler = self.get_anchor_and_img_shuffler(batch)
         shuffled_img = img_shuffler.shuffle(batch['img'])
 
@@ -422,30 +456,34 @@ class PoseSegModel(PoseModel):
         feats_combined, pred_kpts_combined = preds_combined if isinstance(preds_combined[0], list) else preds_combined[1]
         feats_unshuffled = [feat[:B] for feat in feats_combined]
 
-        # box kpt loss + seg cls loss
+        # box kpt loss 
         pred_kpts_unshuffled = pred_kpts_combined[:B] if pred_kpts_combined is not None else None
-        box_kpt_loss = self.criterion((feats_unshuffled, pred_kpts_unshuffled), batch)
+        box_kpt_loss = self.criterion['bbox_kpt']((feats_unshuffled, pred_kpts_unshuffled), batch)
+
+        # seg cls loss
+        batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
+        seg_cls_loss = self.criterion['seg_cls']((feats_unshuffled, pred_kpts_unshuffled), batch)
 
         # obj loss
-        _, _, shuffled_pred_seg_obj, _ = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W
-        deshuffled_seg_obj_anchor = anchor_shuffler.unshuffle(shuffled_pred_seg_obj.detach()).sigmoid()
-        deshuffled_seg_obj_img = F.interpolate(deshuffled_seg_obj_anchor, size=(img_H, img_W), mode='nearest')
-        bboxes_img_obj = batch['bboxes_img'].mean(dim=1, keepdim=True).cuda()
-        shuffled_bboxes_img_obj = anchor_shuffler.shuffle(bboxes_img_obj)
-        batch_seg_objctness = {'seg_objectness': torch.cat([deshuffled_seg_obj_img, shuffled_bboxes_img_obj], dim=0)}
+        _, _, shuffled_pred_seg_obj, _ = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, A_H, A_W
+        deshuffled_pred_seg_obj_anchor = anchor_shuffler.unshuffle(shuffled_pred_seg_obj.detach()).sigmoid()
+        seg_obj_anchor = batch['anchor_level_cls'].mean(dim=1, keepdim=True) # B, 1, A_H, A_W
+        shuffled_seg_obj_anchor = anchor_shuffler.shuffle(seg_obj_anchor)
+        batch_seg_obj = {'seg_objectness': torch.cat([deshuffled_pred_seg_obj_anchor, shuffled_seg_obj_anchor], dim=0)}
+        seg_obj_loss = self.criterion['seg_obj'](preds_combined, batch_seg_obj)
 
-        seg_obj_loss = self.criterion(preds_combined, batch_seg_objctness)
-
-        return box_kpt_loss + seg_obj_loss
+        loss_sum = box_kpt_loss[0] + seg_cls_loss[0] + seg_obj_loss[0]
+        loss_items =  torch.cat([box_kpt_loss[1], seg_cls_loss[1], seg_obj_loss[1]])
+        return loss_sum, loss_items
 
 
     def init_criterion(self):
-        return v8PoseSegLoss(self)
-        # return 
-        # {
-        #     'pose_seg_cls': v8PoseSegLoss(self),
-        #     'seg_obj': v8SegObjLoss(self),
-        # }
+        return {
+            'bbox_kpt': v8PSLPose(self),
+            'seg_cls': v8PSLSegCls(self),
+            'seg_obj': v8PSLSegObj(self),
+        }
+
 
 
 class PoseTunableHeadModel(PoseModel):
