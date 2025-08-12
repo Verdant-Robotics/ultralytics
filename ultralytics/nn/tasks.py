@@ -385,7 +385,17 @@ class PoseSegModel(PoseModel):
         if isinstance(x, dict):  # for cases of training and validating while training.
             return self.loss(x, *args, **kwargs)
         return self.predict(x, *args, **kwargs)
-    
+
+
+    def get_anchor_and_img_shuffler(self, batch):
+        min_stride_idx = int(self.stride.argmin())
+        min_stride = int(self.stride[min_stride_idx])
+        img_H, img_W = batch['ori_shape'][0][0], batch['ori_shape'][0][1]        
+        anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
+        anchor_shuffler =  Shuffler(tile_shape=(anchor_H, anchor_W), num_oper=self.args.shuffle_num)
+        img_shuffler = anchor_shuffler.scale((min_stride, min_stride))
+        return anchor_shuffler, img_shuffler
+
 
     def loss(self, batch, preds=None):
         """
@@ -401,50 +411,41 @@ class PoseSegModel(PoseModel):
         if preds:
             assert self.training is False
             return self.criterion(preds, batch)
+        
+        anchor_shuffler, img_shuffler = self.get_anchor_and_img_shuffler(batch)
+        shuffled_img = img_shuffler.shuffle(batch['img'])
 
-        min_stride = int(self.stride.min())
-        anchor_len = self.args.imgsz // min_stride
-        anchor_shuffler =  Shuffler(tile_shape=(anchor_len, anchor_len), num_oper=self.args.shuffle_num)
-        img_shuffler = anchor_shuffler.scale((min_stride, min_stride))
-        batch['is_shuffled'] = torch.zeros((batch['img'].shape[0], 1), dtype=torch.bool)
+        combined_img = torch.cat((batch['img'], shuffled_img), dim=0) # 2 x B, 3, H, W
+        preds_combined = self.forward(combined_img)
 
-        batch_shuffled = deepcopy(batch)
-        batch_shuffled['img'] = img_shuffler.shuffle(batch_shuffled['img'])
-        batch_shuffled['bboxes_img'] = img_shuffler.shuffle(batch_shuffled['bboxes_img'])
-        batch_shuffled['is_shuffled'] = torch.ones((batch_shuffled['img'].shape[0], 1), dtype=torch.bool)
+        B, _, img_H, img_W = batch['img'].shape
+        feats_combined, pred_kpts_combined = preds_combined if isinstance(preds_combined[0], list) else preds_combined[1]
+        feats_unshuffled = [feat[:B] for feat in feats_combined]
 
-        combined_batch = {}
-        for k in batch.keys():
-            if k in ['im_file', 'ignore_kpt', 'ori_shape', 'resized_shape']:
-                combined_batch[k] = batch[k] + batch_shuffled[k]
-            if k in ['img', 'cls', 'bboxes', 'keypoints', 'bboxes_img', 'is_shuffled']:
-                combined_batch[k] = torch.cat((batch[k], batch_shuffled[k]), dim=0)
-            if k in ['batch_idx']:
-                combined_batch['batch_idx'] = torch.cat((batch['batch_idx'], batch_shuffled['batch_idx'] + batch['batch_idx'].max() + 1), dim=0)
+        # box kpt loss + seg cls loss
+        pred_kpts_unshuffled = pred_kpts_combined[:B] if pred_kpts_combined is not None else None
+        box_kpt_loss = self.criterion((feats_unshuffled, pred_kpts_unshuffled), batch)
 
-        preds_combined = self.forward(combined_batch['img'])
-        feats, pred_kpts = preds_combined if isinstance(preds_combined[0], list) else preds_combined[1]
-        _, _, pred_seg_obj, _ = feats[0].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W
+        # obj loss
+        _, _, shuffled_pred_seg_obj, _ = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, C, H, W
+        deshuffled_seg_obj_anchor = anchor_shuffler.unshuffle(shuffled_pred_seg_obj.detach()).sigmoid()
+        deshuffled_seg_obj_img = F.interpolate(deshuffled_seg_obj_anchor, size=(img_H, img_W), mode='nearest')
+        bboxes_img_obj = batch['bboxes_img'].mean(dim=1, keepdim=True).cuda()
+        shuffled_bboxes_img_obj = anchor_shuffler.shuffle(bboxes_img_obj)
+        batch_seg_objctness = {'seg_objectness': torch.cat([deshuffled_seg_obj_img, shuffled_bboxes_img_obj], dim=0)}
 
-        shuffled_preds = pred_seg_obj[combined_batch['is_shuffled'].squeeze(1)]
-        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_preds.detach()).sigmoid()
+        seg_obj_loss = self.criterion(preds_combined, batch_seg_objctness)
 
-        res0_deshuffled_seg_obj = deshuffled_seg_obj.flatten(start_dim=2)
-        res1_deshuffled_seg_obj = F.interpolate(deshuffled_seg_obj, size=(feats[1].shape[2], feats[1].shape[3]), mode='nearest').flatten(start_dim=2)
-        res2_deshuffled_seg_obj = F.interpolate(deshuffled_seg_obj, size=(feats[2].shape[2], feats[2].shape[3]), mode='nearest').flatten(start_dim=2)
-        res_combined_deshuffled_seg_obj = torch.cat([res0_deshuffled_seg_obj, res1_deshuffled_seg_obj, res2_deshuffled_seg_obj], dim=2).float()
-
-        combined_batch['unshuffled_bboxes_img'] = torch.zeros((combined_batch['img'].shape[0], 1, res_combined_deshuffled_seg_obj.shape[2]), dtype=torch.float32, device=res_combined_deshuffled_seg_obj.device)
-        combined_batch['unshuffled_bboxes_img'][combined_batch['is_shuffled'].squeeze(1)] = res_combined_deshuffled_seg_obj
-
-        combined_batch['is_unshuffled'] = torch.zeros((combined_batch['img'].shape[0], 1), dtype=torch.bool)
-        combined_batch['is_unshuffled'][combined_batch['is_shuffled'].squeeze(1)] = True
-
-        return self.criterion(preds_combined, combined_batch)
+        return box_kpt_loss + seg_obj_loss
 
 
     def init_criterion(self):
         return v8PoseSegLoss(self)
+        # return 
+        # {
+        #     'pose_seg_cls': v8PoseSegLoss(self),
+        #     'seg_obj': v8SegObjLoss(self),
+        # }
 
 
 class PoseTunableHeadModel(PoseModel):
