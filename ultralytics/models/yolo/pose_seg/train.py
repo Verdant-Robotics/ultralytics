@@ -6,7 +6,6 @@ from ultralytics.models import yolo
 from ultralytics.nn.tasks import PoseSegModel
 from ultralytics.utils import DEFAULT_CFG, LOGGER
 from ultralytics.utils.plotting import plot_images, plot_results
-from ultralytics.models.yolo.pose_seg.callbacks import on_train_batch_start, on_train_batch_end, on_train_epoch_end
 
 class PoseSegTrainer(yolo.detect.DetectionTrainer):
     """
@@ -32,10 +31,6 @@ class PoseSegTrainer(yolo.detect.DetectionTrainer):
         if isinstance(self.args.device, str) and self.args.device.lower() == 'mps':
             LOGGER.warning("WARNING ⚠️ Apple MPS known Pose bug. Recommend 'device=cpu' for Pose models. "
                            'See https://github.com/ultralytics/ultralytics/issues/4031.')
-        
-        self.add_callback('on_train_batch_start', on_train_batch_start)
-        self.add_callback('on_train_batch_end', on_train_batch_end)
-        self.add_callback('on_train_epoch_end', on_train_epoch_end)
 
 
     def get_model(self, cfg=None, weights=None, verbose=True):
@@ -54,7 +49,7 @@ class PoseSegTrainer(yolo.detect.DetectionTrainer):
 
     def get_validator(self):
         """Returns an instance of the PoseValidator class for validation."""
-        self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'seg_obj_loss_shuffled', "seg_clsfy_loss_non_shuffled", 'seg_obj_loss_unshuffled'
+        self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'seg_obj', 'seg_cls'
         return yolo.pose_seg.PoseSegValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))
 
     def plot_training_samples(self, batch, ni):
