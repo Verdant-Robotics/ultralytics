@@ -35,9 +35,10 @@ class PoseSegValidator(PoseValidator):
         """
         Pi_list = preds[1][0]
         x_flat = preds[0]
-        seg_obj = x_flat[:, 6:7, :]
-        seg_logits = x_flat[:, 7:7+self.seg_ch_num, :]
-        return seg_obj, seg_logits, Pi_list
+        seg_obj_sh = x_flat[:, 6:7, :]
+        seg_obj_unsh = x_flat[:, 7:8, :]
+        seg_logits = x_flat[:, 8:8+self.seg_ch_num, :]
+        return seg_obj_unsh, seg_logits, Pi_list
 
 
     def postprocess(self, preds):
@@ -134,7 +135,7 @@ class PoseSegValidator(PoseValidator):
 
     def plot_predictions(self, batch, predictions, ni):
         pred_bbox_kpts = predictions[0]
-        kpt_offset = 4 + self.nc + self.seg_ch_num + 1 # xyxy + C + S + 1(seg_obj)
+        kpt_offset = 4 + self.nc + self.seg_ch_num + 1 + 1 # xyxy + C + S + 2(seg_obj for sh + unsh)
         pred_kpts = torch.cat([p[:, kpt_offset:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
         batch_idx, cls, bboxes = output_to_target(pred_bbox_kpts, max_det=self.args.max_det)
         pred_seg_obj, pred_seg_clsfy, Pi_list  = predictions[1]
