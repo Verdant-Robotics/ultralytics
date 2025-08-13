@@ -400,15 +400,13 @@ class DetectAndSeg(Detect):
         self.no = nc + self.reg_max * 4 + seg_ch_num + 1
         self.seg_ch_num = seg_ch_num
         c4 = max(16, ch[0] // 4)
-
-        self.cv_seg_obj = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1, 1)) for x in ch)
-        self.cv_seg_clsfy = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, seg_ch_num, 1)) for x in ch)
+        self.cv_seg = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1 + seg_ch_num, 1)) for x in ch) # 1 + seg clses
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
         shape = x[0].shape  # BCHW
         for i in range(self.nl):  # per detection scale
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv_seg_obj[i](x[i]), self.cv_seg_clsfy[i](x[i])), 1)
+            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv_seg[i](x[i])), 1)
 
         if self.training:
             return x

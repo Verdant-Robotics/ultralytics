@@ -388,8 +388,7 @@ class PoseSegModel(PoseModel):
         return self.predict(x, *args, **kwargs)
 
     def get_anchor_and_img_shuffler(self, batch):
-        min_stride_idx = int(self.stride.argmin())
-        min_stride = int(self.stride[min_stride_idx])
+        min_stride = int(self.stride.min())
         img_H, img_W = batch['ori_shape'][0][0], batch['ori_shape'][0][1]        
         anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
         anchor_shuffler =  Shuffler(tile_shape=(anchor_H, anchor_W), num_oper=self.args.shuffle_num)
@@ -433,7 +432,7 @@ class PoseSegModel(PoseModel):
             assert self.training is False
             box_kpt_loss = self.calc_box_kpt_loss(preds=preds, batch=batch)
             seg_cls_loss = self.calc_seg_cls_loss(preds=preds, batch=batch)
-            seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # To avoid running into errors
+            seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # Object loss can only be computed during training
             loss_sum = box_kpt_loss[0] + seg_cls_loss[0]
             loss_items =  torch.cat([box_kpt_loss[1], seg_obj_loss_item, seg_cls_loss[1]]) # Order should match self.loss_names in pose_seg/train.py
             return loss_sum, loss_items
@@ -457,7 +456,6 @@ class PoseSegModel(PoseModel):
             preds_combined=preds_combined
 
         )
-
         loss_sum = box_kpt_loss[0] + seg_cls_loss[0] + seg_obj_loss[0]
         loss_items =  torch.cat([box_kpt_loss[1], seg_obj_loss[1], seg_cls_loss[1]]) # Order should match self.loss_names in pose_seg/train.py
         return loss_sum, loss_items
