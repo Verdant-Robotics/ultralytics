@@ -558,15 +558,14 @@ class v8PSLSegObj(v8PoseSegLoss):
         super().__init__(model)
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(1, device=self.device)  # seg_obj
         _, _, _, _, pred_seg_obj, _ = self.prepare_preds(preds)
-        batch_size = pred_seg_obj.shape[0]
         target_seg_obj = batch['seg_objectness'].flatten(start_dim=2)
-        max_anchor_idx = target_seg_obj.shape[2]
-        pred_seg_obj = pred_seg_obj[:, :, :max_anchor_idx]
+        num_labeled_anchors = target_seg_obj.shape[2]
+        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
-        loss[0] = loss_per_anchor.mean() * self.hyp.seg
-        return loss.sum() * batch_size, loss.detach()
+        loss = loss_per_anchor.mean().unsqueeze(0) * self.hyp.seg
+        batch_size = pred_seg_obj.shape[0]
+        return loss * batch_size, loss.detach()
 
 
 class v8PSLSegCls(v8PoseSegLoss):
@@ -577,22 +576,19 @@ class v8PSLSegCls(v8PoseSegLoss):
         super().__init__(model)
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(1, device=self.device)  # seg_obj
         _, _, _, _, _, pred_seg_clsfy = self.prepare_preds(preds)
-        batch_size = pred_seg_clsfy.shape[0]
-
-        anchor_level_cls = batch['anchor_level_cls'] # B, C, A/2, A/2
+        anchor_level_cls = batch['anchor_level_cls']
         target_seg_cls = anchor_level_cls.flatten(start_dim=2) # B, C, A
-        max_anchor_idx = target_seg_cls.shape[2]
-        pred_seg_cls = pred_seg_clsfy[:, :, :max_anchor_idx] # B, C, A
+        num_labeled_anchors = target_seg_cls.shape[2]
+        pred_seg_cls = pred_seg_clsfy[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_cls, target_seg_cls)  # (B, C, A)
-
         zero_mask = (target_seg_cls == 0).all(dim=1).unsqueeze(1) # B, 1, A
         _, C, _ = pred_seg_cls.shape
         zero_mask_expanded = zero_mask.expand(-1, C, -1)
         loss_per_anchor[zero_mask_expanded] = 0
-        loss[0] = loss_per_anchor.mean() * self.hyp.seg        
-        return loss.sum() * batch_size, loss.detach()
+        loss = loss_per_anchor.mean().unsqueeze(0) * self.hyp.seg
+        batch_size = pred_seg_clsfy.shape[0]
+        return loss * batch_size, loss.detach()
 
 
 class v8PoseTunableHeadLoss(v8PoseLoss):
