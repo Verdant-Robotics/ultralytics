@@ -531,8 +531,8 @@ class v8PoseSegLoss(v8PoseLoss):
     def prepare_preds(self, preds):
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
-        pred_distri, pred_scores, pred_seg_obj, pred_seg_clsfy = all_preds.split((self.reg_max * 4, self.nc, 1, self.seg_ch_num), 1) # B, S, A
-        return feats, pred_distri, pred_scores, pred_kpts, pred_seg_obj, pred_seg_clsfy
+        pred_distri, pred_scores, pred_seg_obj_sh, pred_seg_obj_unsh, pred_seg_clsfy = all_preds.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1) # B, S, A
+        return feats, pred_distri, pred_scores, pred_kpts, pred_seg_obj_sh, pred_seg_obj_unsh, pred_seg_clsfy
     
     def __call__(self, preds, batch):
         return NotImplementedError
@@ -544,7 +544,7 @@ class v8PSLPose(v8PoseSegLoss):
 
     def __call__(self, preds, batch):
         loss = torch.zeros(5, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
-        feats, pred_distri, pred_scores, pred_kpts, _, _ = self.prepare_preds(preds)
+        feats, pred_distri, pred_scores, pred_kpts, _, _, _ = self.prepare_preds(preds)
         batch_size = pred_distri.shape[0]
         loss = self.calculate_bbox_kpt_loss(loss, batch, feats, pred_distri, pred_scores, pred_kpts)
         return loss.sum() * batch_size, loss.detach()
@@ -558,14 +558,26 @@ class v8PSLSegObj(v8PoseSegLoss):
         super().__init__(model)
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(1, device=self.device)  # seg_obj
-        _, _, _, _, pred_seg_obj, _ = self.prepare_preds(preds)
-        batch_size = pred_seg_obj.shape[0]
-        target_seg_obj = batch['seg_objectness'].flatten(start_dim=2)
-        max_anchor_idx = target_seg_obj.shape[2]
-        pred_seg_obj = pred_seg_obj[:, :, :max_anchor_idx]
-        loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
-        loss[0] = loss_per_anchor.mean() * self.hyp.seg
+        loss = torch.zeros(2, device=self.device)  # seg_obj_sh, seg_obj_unsh
+        _, _, _, _, pred_seg_obj_sh, pred_seg_obj_unsh, _ = self.prepare_preds(preds)
+
+        batch_size = pred_seg_obj_sh.shape[0]
+        half_batch = batch_size//2
+
+        target_seg_obj_sh = batch['seg_objectness_sh'].flatten(start_dim=2)
+        target_seg_obj_unsh = batch['seg_objectness_unsh'].flatten(start_dim=2)
+
+        max_anchor_idx = target_seg_obj_sh.shape[2]
+
+        pred_seg_obj_sh = pred_seg_obj_sh[half_batch:, :, :max_anchor_idx]
+        pred_seg_obj_unsh = pred_seg_obj_unsh[:half_batch, :, :max_anchor_idx]
+
+        loss_per_anchor_sh = self.bce(pred_seg_obj_sh, target_seg_obj_sh)
+        loss_per_anchor_unsh = self.bce(pred_seg_obj_unsh, target_seg_obj_unsh)
+
+        loss[0] = loss_per_anchor_sh.mean() * self.hyp.seg
+        loss[1] = loss_per_anchor_unsh.mean() * self.hyp.seg
+
         return loss.sum() * batch_size, loss.detach()
 
 
@@ -578,7 +590,7 @@ class v8PSLSegCls(v8PoseSegLoss):
 
     def __call__(self, preds, batch):
         loss = torch.zeros(1, device=self.device)  # seg_obj
-        _, _, _, _, _, pred_seg_clsfy = self.prepare_preds(preds)
+        _, _, _, _, _, _, pred_seg_clsfy = self.prepare_preds(preds)
         batch_size = pred_seg_clsfy.shape[0]
 
         anchor_level_cls = batch['anchor_level_cls'] # B, C, A/2, A/2

@@ -435,7 +435,7 @@ class PoseSegModel(PoseModel):
             seg_cls_loss = self.calc_seg_cls_loss(preds=preds, batch=batch)
             seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # To avoid running into errors
             loss_sum = box_kpt_loss[0] + seg_cls_loss[0]
-            loss_items =  torch.cat([box_kpt_loss[1], seg_obj_loss_item, seg_cls_loss[1]]) # Order should match self.loss_names in pose_seg/train.py
+            loss_items =  torch.cat([box_kpt_loss[1], seg_obj_loss_item, seg_obj_loss_item, seg_cls_loss[1]]) # Order should match self.loss_names in pose_seg/train.py
             return loss_sum, loss_items
 
         anchor_shuffler, img_shuffler = self.get_anchor_and_img_shuffler(batch)
@@ -452,7 +452,7 @@ class PoseSegModel(PoseModel):
         seg_cls_loss = self.calc_seg_cls_loss(preds=(feats_unshuffled, None), batch=batch)
         seg_obj_loss = self.calc_seg_obj_loss(
             anchor_shuffler = anchor_shuffler,
-            shuffled_seg_obj_pred = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, self.seg_ch_num), 1)[2],
+            shuffled_seg_obj_pred = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)[2],
             seg_obj_gt = batch['anchor_level_cls'].mean(dim=1, keepdim=True),
             preds_combined=preds_combined
 
@@ -472,7 +472,10 @@ class PoseSegModel(PoseModel):
     def calc_seg_obj_loss(self, anchor_shuffler, shuffled_seg_obj_pred, seg_obj_gt, preds_combined):
         shuffled_seg_obj_gt = anchor_shuffler.shuffle(seg_obj_gt)
         deshuffled_seg_obj_pseudo_label = anchor_shuffler.unshuffle(shuffled_seg_obj_pred.detach()).sigmoid()
-        batch = {'seg_objectness': torch.cat([deshuffled_seg_obj_pseudo_label, shuffled_seg_obj_gt], dim=0)}
+        batch = {
+            'seg_objectness_unsh': deshuffled_seg_obj_pseudo_label, 
+            'seg_objectness_sh': shuffled_seg_obj_gt,
+        }
         return self.criterion['seg_obj'](preds_combined, batch)
 
     def init_criterion(self):

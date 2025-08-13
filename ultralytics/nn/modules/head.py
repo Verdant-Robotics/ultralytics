@@ -397,18 +397,19 @@ class DetectAndSeg(Detect):
     def __init__(self, nc=80, ch=(), seg_ch_num=1):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__(nc, ch)
-        self.no = nc + self.reg_max * 4 + seg_ch_num + 1
+        self.no = nc + self.reg_max * 4 + seg_ch_num + 1 + 1
         self.seg_ch_num = seg_ch_num
         c4 = max(16, ch[0] // 4)
 
-        self.cv_seg_obj = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1, 1)) for x in ch)
+        self.cv_seg_obj_sh = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1, 1)) for x in ch)
+        self.cv_seg_obj_unsh = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 1, 1)) for x in ch)
         self.cv_seg_clsfy = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, seg_ch_num, 1)) for x in ch)
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
         shape = x[0].shape  # BCHW
         for i in range(self.nl):  # per detection scale
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv_seg_obj[i](x[i]), self.cv_seg_clsfy[i](x[i])), 1)
+            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv_seg_obj_sh[i](x[i]), self.cv_seg_obj_unsh[i](x[i]), self.cv_seg_clsfy[i](x[i])), 1)
 
         if self.training:
             return x
@@ -420,10 +421,12 @@ class DetectAndSeg(Detect):
         if self.export and self.format in ('saved_model', 'pb', 'tflite', 'edgetpu', 'tfjs'):  # avoid TF FlexSplitV ops
             box = x_cat[:, :self.reg_max * 4]
             cls = x_cat[:, self.reg_max * 4:self.reg_max * 4 + self.nc]
-            seg_obj = x_cat[:, self.reg_max * 4 + self.nc:self.reg_max * 4 + self.nc+1]
-            seg_clsfy = x_cat[:, self.reg_max * 4 + self.nc+1:]
+            seg_offset = self.reg_max * 4 + self.nc
+            seg_obj_sh = x_cat[:, seg_offset : seg_offset+1]
+            seg_obj_unsh = x_cat[:, seg_offset + 1 : seg_offset+2]
+            seg_clsfy = x_cat[:, seg_offset+2:]
         else:
-            box, cls, seg_obj, seg_clsfy = x_cat.split((self.reg_max * 4, self.nc, 1, self.seg_ch_num), 1)
+            box, cls, seg_obj_sh, seg_obj_unsh, seg_clsfy = x_cat.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)
 
         dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
 
@@ -436,7 +439,7 @@ class DetectAndSeg(Detect):
             img_size = torch.tensor([img_w, img_h, img_w, img_h], device=dbox.device).reshape(1, 4, 1)
             dbox /= img_size
 
-        y = torch.cat((dbox, cls.sigmoid(), seg_obj.sigmoid(), seg_clsfy.sigmoid()), 1) # (B, 4=xyxy, A) (B, nc0,..,nci, A), (B, seg0, ..., segj, A)
+        y = torch.cat((dbox, cls.sigmoid(), seg_obj_sh.sigmoid(), seg_obj_unsh.sigmoid(), seg_clsfy.sigmoid()), 1) # (B, 4=xyxy, A) (B, nc0,..,nci, A), (B, seg0, ..., segj, A)
         return y if self.export else (y, x)
 
 

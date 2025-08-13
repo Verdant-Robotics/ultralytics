@@ -53,6 +53,7 @@ if __name__ == "__main__":
         batch=128,
         name=experiment_name,
         device=[0, 1, 2, 3, 4, 5, 6, 7],
+        # device=[0],
         patience=50,
     )
 
