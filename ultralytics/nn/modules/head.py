@@ -400,7 +400,7 @@ class DetectAndSeg(Detect):
         self.no = nc + self.reg_max * 4 + seg_ch_num + 1 + 1
         self.seg_ch_num = seg_ch_num
         c4 = max(16, ch[0] // 4)
-        self.cv_seg = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 2 + seg_ch_num, 1)) for x in ch) # 1(sh obj) + 1(unsh obj) + seg clses
+        self.cv_seg = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), nn.Conv2d(c4, 2 + seg_ch_num, 1)) for x in ch) # 2 obj channels + seg clses
 
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""

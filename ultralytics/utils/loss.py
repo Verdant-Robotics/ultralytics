@@ -583,15 +583,15 @@ class v8PSLSegObj(v8PoseSegLoss):
         preds_dict = self.prepare_preds(preds)
         pred_seg_obj0, pred_seg_obj1 = preds_dict[self.PredE.SEG_OBJ0], preds_dict[self.PredE.SEG_OBJ1]        
         batch_size = pred_seg_obj0.shape[0]
-        last_unshuffled_idx = batch['seg_objectness_unsh'].shape[0]
+        shuffled_len = batch['seg_obj0'].shape[0]
 
         loss[0] = self.calc_objectness_loss(
-            pred_seg_obj = pred_seg_obj0[last_unshuffled_idx:],
-            target_seg_obj = batch['seg_objectness_sh']
+            pred_seg_obj = pred_seg_obj0[shuffled_len:],
+            target_seg_obj = batch['seg_obj0']
         )
         loss[1] = self.calc_objectness_loss(
-            pred_seg_obj = pred_seg_obj1[:last_unshuffled_idx],
-            target_seg_obj = batch['seg_objectness_unsh']
+            pred_seg_obj = pred_seg_obj1[:shuffled_len],
+            target_seg_obj = batch['seg_obj1']
         )
         return loss.sum() * batch_size, loss.detach()
     

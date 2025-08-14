@@ -406,11 +406,11 @@ class PoseSegModel(PoseModel):
         B, _, img_H, img_W = img.shape
         anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
 
-        gt_bboxes_A = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_H, anchor_W, anchor_H, anchor_W]).to(gt_bboxes.device))) # T, 4
+        gt_bboxes_scaled = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_H, anchor_W, anchor_H, anchor_W]).to(gt_bboxes.device))) # T, 4
         bboxes_img = torch.zeros((B, self.nc, anchor_H, anchor_W), device=img.device) # B, C, H, W
 
-        for d_i in range(gt_bboxes_A.shape[0]):
-            x1, y1, x2, y2 = gt_bboxes_A[d_i, :4]
+        for d_i in range(gt_bboxes_scaled.shape[0]):
+            x1, y1, x2, y2 = gt_bboxes_scaled[d_i, :4]
             x1, y1 = torch.floor(x1).long(), torch.floor(y1).long()
             x2, y2 = torch.ceil(x2).long(), torch.ceil(y2).long()
             b_idx = batch_idx[d_i].long()
@@ -473,8 +473,8 @@ class PoseSegModel(PoseModel):
         deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_seg_obj_pred.detach()).sigmoid()
         deshuffled_seg_obj_pseudo_label = deshuffled_seg_obj * (seg_obj_gt > 0).float()
         batch = {
-            'seg_objectness_unsh': deshuffled_seg_obj_pseudo_label, 
-            'seg_objectness_sh': shuffled_seg_obj_gt,
+            'seg_obj0': shuffled_seg_obj_gt,
+            'seg_obj1': deshuffled_seg_obj_pseudo_label, 
         }
         return self.criterion['seg_obj'](preds_combined, batch)
 
