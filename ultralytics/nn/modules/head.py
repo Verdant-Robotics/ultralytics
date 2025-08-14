@@ -419,11 +419,11 @@ class DetectAndSeg(Detect):
             box = x_cat[:, :self.reg_max * 4]
             cls = x_cat[:, self.reg_max * 4:self.reg_max * 4 + self.nc]
             seg_offset = self.reg_max * 4 + self.nc
-            seg_obj_sh = x_cat[:, seg_offset : seg_offset+1]
-            seg_obj_unsh = x_cat[:, seg_offset + 1 : seg_offset+2]
+            seg_obj0 = x_cat[:, seg_offset : seg_offset+1]
+            seg_obj1 = x_cat[:, seg_offset + 1 : seg_offset+2]
             seg_clsfy = x_cat[:, seg_offset+2:]
         else:
-            box, cls, seg_obj_sh, seg_obj_unsh, seg_clsfy = x_cat.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)
+            box, cls, seg_obj0, seg_obj1, seg_clsfy = x_cat.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)
 
         dbox = dist2bbox(self.dfl(box), self.anchors.unsqueeze(0), xywh=True, dim=1) * self.strides
 
@@ -436,7 +436,7 @@ class DetectAndSeg(Detect):
             img_size = torch.tensor([img_w, img_h, img_w, img_h], device=dbox.device).reshape(1, 4, 1)
             dbox /= img_size
 
-        y = torch.cat((dbox, cls.sigmoid(), seg_obj_sh.sigmoid(), seg_obj_unsh.sigmoid(), seg_clsfy.sigmoid()), 1) # (B, 4=xyxy, A) (B, nc0,..,nci, A), (B, seg0, ..., segj, A)
+        y = torch.cat((dbox, cls.sigmoid(), seg_obj0.sigmoid(), seg_obj1.sigmoid(), seg_clsfy.sigmoid()), 1) # (B, 4=xyxy, A) (B, nc0,..,nci, A), (B, seg0, ..., segj, A)
         return y if self.export else (y, x)
 
 

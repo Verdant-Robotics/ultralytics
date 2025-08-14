@@ -529,8 +529,8 @@ class v8PoseSegLoss(v8PoseLoss):
         DIST = 1
         SCORES = 2
         KPTS = 3
-        SEG_OBJ_SH = 4
-        SEG_OBJ_UNSH = 5
+        SEG_OBJ0 = 4
+        SEG_OBJ1 = 5
         SEG_CLS = 6
 
     def __init__(self, model):
@@ -541,15 +541,15 @@ class v8PoseSegLoss(v8PoseLoss):
     def prepare_preds(self, preds):
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
-        pred_distri, pred_scores, pred_seg_obj_sh, pred_seg_obj_unsh, pred_seg_clsfy = all_preds.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1) # B, S, A
+        pred_distri, pred_scores, pred_seg_obj0, pred_seg_obj1, pred_seg_cls = all_preds.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1) # B, S, A
         return {
             self.PredE.FEAT: feats,
             self.PredE.DIST: pred_distri,
             self.PredE.SCORES: pred_scores,
             self.PredE.KPTS: pred_kpts,
-            self.PredE.SEG_OBJ_SH: pred_seg_obj_sh,
-            self.PredE.SEG_OBJ_UNSH: pred_seg_obj_unsh,
-            self.PredE.SEG_CLS: pred_seg_clsfy
+            self.PredE.SEG_OBJ0: pred_seg_obj0,
+            self.PredE.SEG_OBJ1: pred_seg_obj1,
+            self.PredE.SEG_CLS: pred_seg_cls
         }
     
     def __call__(self, preds, batch):
@@ -565,7 +565,7 @@ class v8PSLPose(v8PoseSegLoss):
         preds_dict = self.prepare_preds(preds)
         feats, pred_distri, pred_scores, pred_kpts = preds_dict[self.PredE.FEAT], preds_dict[self.PredE.DIST], preds_dict[self.PredE.SCORES], preds_dict[self.PredE.KPTS]
         batch_size = pred_distri.shape[0]
-        loss = self.calculate_bbox_kpt_loss(loss, batch, feats, pred_distri, pred_scores, pred_kpts)
+        loss = self.calculate_bbox_kpt_loss(loss=loss, batch=batch, feats=feats, pred_distri=pred_distri, pred_scores=pred_scores, pred_kpts=pred_kpts)
         return loss.sum() * batch_size, loss.detach()
 
 
@@ -581,16 +581,16 @@ class v8PSLSegObj(v8PoseSegLoss):
     def __call__(self, preds, batch):
         loss = torch.zeros(2, device=self.device)
         preds_dict = self.prepare_preds(preds)
-        pred_seg_obj_sh, pred_seg_obj_unsh = preds_dict[self.PredE.SEG_OBJ_SH], preds_dict[self.PredE.SEG_OBJ_UNSH]        
-        batch_size = pred_seg_obj_sh.shape[0]
+        pred_seg_obj0, pred_seg_obj1 = preds_dict[self.PredE.SEG_OBJ0], preds_dict[self.PredE.SEG_OBJ1]        
+        batch_size = pred_seg_obj0.shape[0]
         last_unshuffled_idx = batch['seg_objectness_unsh'].shape[0]
 
         loss[0] = self.calc_objectness_loss(
-            pred_seg_obj = pred_seg_obj_sh[last_unshuffled_idx:],
+            pred_seg_obj = pred_seg_obj0[last_unshuffled_idx:],
             target_seg_obj = batch['seg_objectness_sh']
         )
         loss[1] = self.calc_objectness_loss(
-            pred_seg_obj = pred_seg_obj_unsh[:last_unshuffled_idx],
+            pred_seg_obj = pred_seg_obj1[:last_unshuffled_idx],
             target_seg_obj = batch['seg_objectness_unsh']
         )
         return loss.sum() * batch_size, loss.detach()
@@ -598,7 +598,7 @@ class v8PSLSegObj(v8PoseSegLoss):
     def calc_objectness_loss(self, pred_seg_obj, target_seg_obj):
         target_seg_obj = target_seg_obj.flatten(start_dim=2)
         num_labeled_anchors = target_seg_obj.shape[2]
-        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution
+        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
         return loss_per_anchor.mean() * self.hyp.seg
 
@@ -611,18 +611,18 @@ class v8PSLSegCls(v8PoseSegLoss):
         super().__init__(model)
 
     def __call__(self, preds, batch):
-        pred_seg_clsfy = self.prepare_preds(preds)[self.PredE.SEG_CLS]
+        pred_seg_cls = self.prepare_preds(preds)[self.PredE.SEG_CLS]
         anchor_level_cls = batch['anchor_level_cls']
         target_seg_cls = anchor_level_cls.flatten(start_dim=2) # B, C, A
         num_labeled_anchors = target_seg_cls.shape[2]
-        pred_seg_cls = pred_seg_clsfy[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution
+        pred_seg_cls = pred_seg_cls[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_cls, target_seg_cls)  # (B, C, A)
         zero_mask = (target_seg_cls == 0).all(dim=1).unsqueeze(1) # B, 1, A
         _, C, _ = pred_seg_cls.shape
         zero_mask_expanded = zero_mask.expand(-1, C, -1)
         loss_per_anchor[zero_mask_expanded] = 0
         loss = loss_per_anchor.mean().unsqueeze(0) * self.hyp.seg
-        batch_size = pred_seg_clsfy.shape[0]
+        batch_size = pred_seg_cls.shape[0]
         return loss * batch_size, loss.detach()
 
 

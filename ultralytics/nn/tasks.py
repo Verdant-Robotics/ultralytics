@@ -406,11 +406,11 @@ class PoseSegModel(PoseModel):
         B, _, img_H, img_W = img.shape
         anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
 
-        gt_bboxes = xywh2xyxy(gt_bboxes.mul_(torch.Tensor([anchor_H, anchor_W, anchor_H, anchor_W]).to(gt_bboxes.device))) # T, 4
+        gt_bboxes_A = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_H, anchor_W, anchor_H, anchor_W]).to(gt_bboxes.device))) # T, 4
         bboxes_img = torch.zeros((B, self.nc, anchor_H, anchor_W), device=img.device) # B, C, H, W
 
-        for d_i in range(gt_bboxes.shape[0]):
-            x1, y1, x2, y2 = gt_bboxes[d_i, :4]
+        for d_i in range(gt_bboxes_A.shape[0]):
+            x1, y1, x2, y2 = gt_bboxes_A[d_i, :4]
             x1, y1 = torch.floor(x1).long(), torch.floor(y1).long()
             x2, y2 = torch.ceil(x2).long(), torch.ceil(y2).long()
             b_idx = batch_idx[d_i].long()
@@ -431,7 +431,6 @@ class PoseSegModel(PoseModel):
         if preds:
             assert self.training is False
             batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
-            
             box_kpt_loss = self.calc_box_kpt_loss(preds=preds, batch=batch)
             seg_cls_loss = self.calc_seg_cls_loss(preds=preds, batch=batch)
             seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # Object loss can only be computed during training
