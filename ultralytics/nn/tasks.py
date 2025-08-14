@@ -430,6 +430,8 @@ class PoseSegModel(PoseModel):
         
         if preds:
             assert self.training is False
+            batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
+            
             box_kpt_loss = self.calc_box_kpt_loss(preds=preds, batch=batch)
             seg_cls_loss = self.calc_seg_cls_loss(preds=preds, batch=batch)
             seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # Object loss can only be computed during training
@@ -446,13 +448,14 @@ class PoseSegModel(PoseModel):
         feats_combined, pred_kpts_combined = preds_combined if isinstance(preds_combined[0], list) else preds_combined[1]
         feats_unshuffled = [feat[:B] for feat in feats_combined]
         pred_kpts_unshuffled = pred_kpts_combined[:B] if pred_kpts_combined is not None else None
+        batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
 
         box_kpt_loss = self.calc_box_kpt_loss(preds=(feats_unshuffled, pred_kpts_unshuffled), batch=batch)
         seg_cls_loss = self.calc_seg_cls_loss(preds=(feats_unshuffled, None), batch=batch)
         seg_obj_loss = self.calc_seg_obj_loss(
             anchor_shuffler = anchor_shuffler,
             shuffled_seg_obj_pred = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)[2],
-            seg_obj_gt = batch['anchor_level_cls'].mean(dim=1, keepdim=True),
+            seg_obj_gt = batch['anchor_level_cls'].max(dim=1, keepdim=True).values,
             preds_combined=preds_combined
 
         )
@@ -464,12 +467,12 @@ class PoseSegModel(PoseModel):
         return self.criterion['bbox_kpt'](preds, batch)
 
     def calc_seg_cls_loss(self, preds, batch):
-        batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
         return self.criterion['seg_cls'](preds, batch)
 
     def calc_seg_obj_loss(self, anchor_shuffler, shuffled_seg_obj_pred, seg_obj_gt, preds_combined):
-        shuffled_seg_obj_gt = anchor_shuffler.shuffle(seg_obj_gt)
-        deshuffled_seg_obj_pseudo_label = anchor_shuffler.unshuffle(shuffled_seg_obj_pred.detach()).sigmoid()
+        shuffled_seg_obj_gt = anchor_shuffler.shuffle(seg_obj_gt) # B, C, H, W
+        deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_seg_obj_pred.detach()).sigmoid()
+        deshuffled_seg_obj_pseudo_label = deshuffled_seg_obj * (seg_obj_gt > 0).float()
         batch = {
             'seg_objectness_unsh': deshuffled_seg_obj_pseudo_label, 
             'seg_objectness_sh': shuffled_seg_obj_gt,
