@@ -22,7 +22,7 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--epochs", type=int, default=200, help="Number of epochs for training")
     parser.add_argument("-p", "--patience", type=int, default=50, help="Number of epochs triggering early stopping when no improvement")
     parser.add_argument("-s", "--batch-size", type=int, default=128, help="Batch size for training")
-    parser.add_argument("-b", "--disable-wandb", action="store_true", help="Disable wandb logging")
+    parser.add_argument("-d", "--disable-wandb", action="store_true", help="Disable wandb logging")
 
     args = parser.parse_args()
 
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         optimizer='SGD',
         lr0=args.learning_rate,
         lrf=0.01,
-        epochs=2,
+        epochs=args.epochs,
         flipud=0.5,
         fliplr=0.5,
         scale=0.2,
@@ -58,8 +58,7 @@ if __name__ == "__main__":
         seed=1,
         batch=args.batch_size,
         name=experiment_name,
-        # device=[0, 1, 2, 3, 4, 5, 6, 7],
-        device=[0],
+        device=[0, 1, 2, 3, 4, 5, 6, 7],
         patience=args.patience,
     )
 
