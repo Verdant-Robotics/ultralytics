@@ -13,7 +13,7 @@ from torch.nn.utils.rnn import pad_sequence
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, is_dir_writeable
 
-from .augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms, RasterizeBoxes
+from .augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms
 from .base import BaseDataset
 from .utils import HELP_URL, LOGGER, get_hash, img2label_paths, verify_image, verify_image_label
 
@@ -141,14 +141,11 @@ class YOLODataset(BaseDataset):
         """Builds and appends transforms to the list."""
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
-            hyp.shuffler_mosaic = hyp.shuffler_mosaic
-            hyp.shuffle_num = hyp.shuffle_num
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
             transforms = v8_transforms(self, self.imgsz, hyp)
         else:
             transforms = Compose([
                 LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False),
-                RasterizeBoxes() # Must be the last!
                 ])
 
         transforms.append(
@@ -167,7 +164,6 @@ class YOLODataset(BaseDataset):
         hyp.mosaic = 0.0  # set mosaic ratio=0.0
         hyp.copy_paste = 0.0  # keep the same behavior as previous v8 close-mosaic
         hyp.mixup = 0.0  # keep the same behavior as previous v8 close-mosaic
-        hyp.shuffler_mosaic = 0.0
         self.transforms = self.build_transforms(hyp)
 
     def update_labels_info(self, label):

@@ -7,7 +7,6 @@ from ultralytics.nn.tasks import PoseSegModel
 from ultralytics.utils import DEFAULT_CFG, LOGGER
 from ultralytics.utils.plotting import plot_images, plot_results
 
-
 class PoseSegTrainer(yolo.detect.DetectionTrainer):
     """
     A class extending the DetectionTrainer class for training based on a pose model.
@@ -33,6 +32,7 @@ class PoseSegTrainer(yolo.detect.DetectionTrainer):
             LOGGER.warning("WARNING ⚠️ Apple MPS known Pose bug. Recommend 'device=cpu' for Pose models. "
                            'See https://github.com/ultralytics/ultralytics/issues/4031.')
 
+
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Get pose estimation model with specified configuration and weights."""
         model = PoseSegModel(cfg, ch=3, nc=self.data['nc'], data_kpt_shape=self.data['kpt_shape'], verbose=verbose)
@@ -46,9 +46,10 @@ class PoseSegTrainer(yolo.detect.DetectionTrainer):
         super().set_model_attributes()
         self.model.kpt_shape = self.data['kpt_shape']
 
+
     def get_validator(self):
         """Returns an instance of the PoseValidator class for validation."""
-        self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'seg_loss'
+        self.loss_names = 'box_loss', 'pose_loss', 'kobj_loss', 'cls_loss', 'dfl_loss', 'seg_obj', 'seg_cls'
         return yolo.pose_seg.PoseSegValidator(self.test_loader, save_dir=self.save_dir, args=copy(self.args))
 
     def plot_training_samples(self, batch, ni):
