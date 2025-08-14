@@ -3,6 +3,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from enum import Enum
 
 from ultralytics.utils.metrics import OKS_SIGMA
 from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
@@ -523,6 +524,15 @@ class v8PoseLoss(v8DetectionLoss):
 
 
 class v8PoseSegLoss(v8PoseLoss):
+    class PredE(Enum):
+        FEAT = 0
+        DIST = 1
+        SCORES = 2
+        KPTS = 3
+        SEG_OBJ_SH = 4
+        SEG_OBJ_UNSH = 5
+        SEG_CLS = 6
+
     def __init__(self, model):
         super().__init__(model)
         self.bce = nn.BCEWithLogitsLoss(reduction='none')
@@ -532,7 +542,15 @@ class v8PoseSegLoss(v8PoseLoss):
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
         pred_distri, pred_scores, pred_seg_obj_sh, pred_seg_obj_unsh, pred_seg_clsfy = all_preds.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1) # B, S, A
-        return feats, pred_distri, pred_scores, pred_kpts, pred_seg_obj_sh, pred_seg_obj_unsh, pred_seg_clsfy
+        return {
+            self.PredE.FEAT: feats,
+            self.PredE.DIST: pred_distri,
+            self.PredE.SCORES: pred_scores,
+            self.PredE.KPTS: pred_kpts,
+            self.PredE.SEG_OBJ_SH: pred_seg_obj_sh,
+            self.PredE.SEG_OBJ_UNSH: pred_seg_obj_unsh,
+            self.PredE.SEG_CLS: pred_seg_clsfy
+        }
     
     def __call__(self, preds, batch):
         return NotImplementedError
@@ -544,7 +562,8 @@ class v8PSLPose(v8PoseSegLoss):
 
     def __call__(self, preds, batch):
         loss = torch.zeros(5, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
-        feats, pred_distri, pred_scores, pred_kpts, _, _, _ = self.prepare_preds(preds)
+        preds_dict = self.prepare_preds(preds)
+        feats, pred_distri, pred_scores, pred_kpts = preds_dict[self.PredE.FEAT], preds_dict[self.PredE.DIST], preds_dict[self.PredE.SCORES], preds_dict[self.PredE.KPTS]
         batch_size = pred_distri.shape[0]
         loss = self.calculate_bbox_kpt_loss(loss, batch, feats, pred_distri, pred_scores, pred_kpts)
         return loss.sum() * batch_size, loss.detach()
@@ -553,32 +572,35 @@ class v8PSLPose(v8PoseSegLoss):
 class v8PSLSegObj(v8PoseSegLoss):
     '''
     Calculates the seg objectness loss.
+    This class assumes that it is called with a combined_preds that the first half of the batch contains unshuffled labels
+    and the second half of the batch has shuffled labels. 
     '''
     def __init__(self, model):
         super().__init__(model)
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(2, device=self.device)  # seg_obj_sh, seg_obj_unsh
-        _, _, _, _, pred_seg_obj_sh, pred_seg_obj_unsh, _ = self.prepare_preds(preds)
-
+        loss = torch.zeros(2, device=self.device)
+        preds_dict = self.prepare_preds(preds)
+        pred_seg_obj_sh, pred_seg_obj_unsh = preds_dict[self.PredE.SEG_OBJ_SH], preds_dict[self.PredE.SEG_OBJ_UNSH]        
         batch_size = pred_seg_obj_sh.shape[0]
-        half_batch = batch_size//2
+        last_unshuffled_idx = batch['seg_objectness_unsh'].shape[0]
 
-        target_seg_obj_sh = batch['seg_objectness_sh'].flatten(start_dim=2)
-        target_seg_obj_unsh = batch['seg_objectness_unsh'].flatten(start_dim=2)
-
-        max_anchor_idx = target_seg_obj_sh.shape[2]
-
-        pred_seg_obj_sh = pred_seg_obj_sh[half_batch:, :, :max_anchor_idx]
-        pred_seg_obj_unsh = pred_seg_obj_unsh[:half_batch, :, :max_anchor_idx]
-
-        loss_per_anchor_sh = self.bce(pred_seg_obj_sh, target_seg_obj_sh)
-        loss_per_anchor_unsh = self.bce(pred_seg_obj_unsh, target_seg_obj_unsh)
-
-        loss[0] = loss_per_anchor_sh.mean() * self.hyp.seg
-        loss[1] = loss_per_anchor_unsh.mean() * self.hyp.seg
-
+        loss[0] = self.calc_objectness_loss(
+            pred_seg_obj = pred_seg_obj_sh[last_unshuffled_idx:],
+            target_seg_obj = batch['seg_objectness_sh']
+        )
+        loss[1] = self.calc_objectness_loss(
+            pred_seg_obj = pred_seg_obj_unsh[:last_unshuffled_idx],
+            target_seg_obj = batch['seg_objectness_unsh']
+        )
         return loss.sum() * batch_size, loss.detach()
+    
+    def calc_objectness_loss(self, pred_seg_obj, target_seg_obj):
+        target_seg_obj = target_seg_obj.flatten(start_dim=2)
+        selected_anchor_len = target_seg_obj.shape[2]
+        pred_seg_obj = pred_seg_obj[:, :, :selected_anchor_len] # We only train the first 96 x 96 anchors
+        loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
+        return loss_per_anchor.mean() * self.hyp.seg
 
 
 class v8PSLSegCls(v8PoseSegLoss):
@@ -589,22 +611,19 @@ class v8PSLSegCls(v8PoseSegLoss):
         super().__init__(model)
 
     def __call__(self, preds, batch):
-        loss = torch.zeros(1, device=self.device)  # seg_obj
-        _, _, _, _, _, _, pred_seg_clsfy = self.prepare_preds(preds)
-        batch_size = pred_seg_clsfy.shape[0]
-
-        anchor_level_cls = batch['anchor_level_cls'] # B, C, A/2, A/2
+        pred_seg_clsfy = self.prepare_preds(preds)[self.PredE.SEG_CLS]
+        anchor_level_cls = batch['anchor_level_cls']
         target_seg_cls = anchor_level_cls.flatten(start_dim=2) # B, C, A
-        max_anchor_idx = target_seg_cls.shape[2]
-        pred_seg_cls = pred_seg_clsfy[:, :, :max_anchor_idx] # B, C, A
+        selected_anchor_len = target_seg_cls.shape[2]
+        pred_seg_cls = pred_seg_clsfy[:, :, :selected_anchor_len] # We only train the first 96 x 96 anchors.
         loss_per_anchor = self.bce(pred_seg_cls, target_seg_cls)  # (B, C, A)
-
         zero_mask = (target_seg_cls == 0).all(dim=1).unsqueeze(1) # B, 1, A
         _, C, _ = pred_seg_cls.shape
         zero_mask_expanded = zero_mask.expand(-1, C, -1)
         loss_per_anchor[zero_mask_expanded] = 0
-        loss[0] = loss_per_anchor.mean() * self.hyp.seg        
-        return loss.sum() * batch_size, loss.detach()
+        loss = loss_per_anchor.mean().unsqueeze(0) * self.hyp.seg
+        batch_size = pred_seg_clsfy.shape[0]
+        return loss * batch_size, loss.detach()
 
 
 class v8PoseTunableHeadLoss(v8PoseLoss):

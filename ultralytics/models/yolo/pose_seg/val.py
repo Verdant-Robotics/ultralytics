@@ -35,9 +35,10 @@ class PoseSegValidator(PoseValidator):
         """
         Pi_list = preds[1][0]
         x_flat = preds[0]
-        seg_obj_sh = x_flat[:, 6:7, :]
-        seg_obj_unsh = x_flat[:, 7:8, :]
-        seg_logits = x_flat[:, 8:8+self.seg_ch_num, :]
+        seg_offset = 4 + self.nc
+        seg_obj_sh = x_flat[:, seg_offset : seg_offset + 1, :]
+        seg_obj_unsh = x_flat[:, seg_offset + 1 : seg_offset + 2, :]
+        seg_logits = x_flat[:, seg_offset + 2 : seg_offset + 2 + self.seg_ch_num, :]
         return seg_obj_unsh, seg_logits, Pi_list
 
 
