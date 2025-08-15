@@ -596,9 +596,9 @@ class v8PSLSegObj(v8PoseSegLoss):
         return loss.sum() * batch_size, loss.detach()
     
     def calc_objectness_loss(self, pred_seg_obj, target_seg_obj):
-        target_seg_obj = target_seg_obj.flatten(start_dim=2)
-        num_labeled_anchors = target_seg_obj.shape[2]
-        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
+        # target_seg_obj = target_seg_obj.flatten(start_dim=2)
+        # num_labeled_anchors = target_seg_obj.shape[2]
+        # pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
         return loss_per_anchor.mean() * self.hyp.seg
 
@@ -612,10 +612,16 @@ class v8PSLSegCls(v8PoseSegLoss):
 
     def __call__(self, preds, batch):
         pred_seg_cls = self.prepare_preds(preds)[self.PredE.SEG_CLS]
-        anchor_level_cls = batch['anchor_level_cls']
-        target_seg_cls = anchor_level_cls.flatten(start_dim=2) # B, C, A
-        num_labeled_anchors = target_seg_cls.shape[2]
-        pred_seg_cls = pred_seg_cls[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
+        anchor_level_cls = batch['anchor_level_cls'] # B, C, H, W
+        res0 = F.interpolate(anchor_level_cls, scale_factor=(1/self.stride[0].item(), 1/self.stride[0].item()), mode='nearest').flatten(start_dim=2)
+        res1 = F.interpolate(anchor_level_cls, scale_factor=(1/self.stride[1].item(), 1/self.stride[1].item()), mode='nearest').flatten(start_dim=2)
+        res2 = F.interpolate(anchor_level_cls, scale_factor=(1/self.stride[2].item(), 1/self.stride[2].item()), mode='nearest').flatten(start_dim=2)
+        
+        anchor_level_cls_res = torch.cat([res0, res1, res2], dim=2)
+        target_seg_cls = anchor_level_cls_res.flatten(start_dim=2) # B, C, A
+
+        # num_labeled_anchors = target_seg_cls.shape[2]
+        # pred_seg_cls = pred_seg_cls[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_cls, target_seg_cls)  # (B, C, A)
         zero_mask = (target_seg_cls == 0).all(dim=1).unsqueeze(1) # B, 1, A
         _, C, _ = pred_seg_cls.shape
