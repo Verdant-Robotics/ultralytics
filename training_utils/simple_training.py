@@ -22,7 +22,7 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--epochs", type=int, default=200, help="Number of epochs for training")
     parser.add_argument("-p", "--patience", type=int, default=50, help="Number of epochs triggering early stopping when no improvement")
     parser.add_argument("-s", "--batch-size", type=int, default=128, help="Batch size for training")
-    parser.add_argument("-b", "--disable-wandb", action="store_true", help="Disable wandb logging")
+    parser.add_argument("-d", "--disable-wandb", action="store_true", help="Disable wandb logging")
 
     args = parser.parse_args()
 

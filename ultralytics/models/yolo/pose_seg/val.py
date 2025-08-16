@@ -28,17 +28,18 @@ class PoseSegValidator(PoseValidator):
         Input: 
             preds = x_flat, ([P1, P2, P3], kpt)
             Each Pi is (bs, self.no, h_i, w_i), with h_i and w_i being different for each P. e.g 8x8, 4x4, 2x2 corresponding to resolution(self.stride)
-            x_flat = (bs, xyxy(bbox),cls0,..,clsi,seg_obj, seg0,...,segj, A) e.g A = anchors_len = 8x8 + 4x4 + 2x2 = 84
+            x_flat = (bs, xyxy(bbox),cls0,..,clsi,seg_obj0,seg_obj1,seg0,...,segj, A) e.g A = anchors_len = 8x8 + 4x4 + 2x2 = 84
         Output:
-            seg_logit (B, seg_ch_num, A)
+            seg_obj (B, 1, A)
+            seg_cls (B, seg_ch_num, A)
             Pi_list for reconstructing anchors later on
         """
         Pi_list = preds[1][0]
         x_flat = preds[0]
         seg_offset = 4 + self.nc
-        seg_obj = x_flat[:, seg_offset : seg_offset + 1, :]
-        seg_logits = x_flat[:, seg_offset + 1 : seg_offset + 1 + self.seg_ch_num, :]
-        return seg_obj, seg_logits, Pi_list
+        seg_obj1 = x_flat[:, seg_offset + 1 : seg_offset + 2, :]
+        seg_cls = x_flat[:, seg_offset + 2 : seg_offset + 2 + self.seg_ch_num, :]
+        return seg_obj1, seg_cls, Pi_list
 
 
     def postprocess(self, preds):
@@ -135,15 +136,10 @@ class PoseSegValidator(PoseValidator):
 
     def plot_predictions(self, batch, predictions, ni):
         pred_bbox_kpts = predictions[0]
-        kpt_offset = 4 + self.nc + self.seg_ch_num + 1 # xyxy + C + S + 1(seg_obj)
+        kpt_offset = 4 + self.nc + self.seg_ch_num + 1 + 1 # xyxy + C + S + 2(two seg obj channels)
         pred_kpts = torch.cat([p[:, kpt_offset:].view(-1, *self.kpt_shape) for p in pred_bbox_kpts], 0)
         batch_idx, cls, bboxes = output_to_target(pred_bbox_kpts, max_det=self.args.max_det)
-        pred_seg_obj, pred_seg_clsfy, Pi_list  = predictions[1]
-
-        anchors, strides = self.get_anchors_and_strides(Pi_list=Pi_list)
-        pred_seg = pred_seg_clsfy * (pred_seg_obj > 0.4).float()
-        seg_results = (pred_seg, anchors, strides)
-
+    
         # plot bbox and kpts
         plot_images(images=batch['img'],
                     batch_idx=batch_idx,
@@ -155,14 +151,18 @@ class PoseSegValidator(PoseValidator):
                     on_plot=self.on_plot,
                     )
 
-        # plot seg results for one resolution
-        plot_images(images=batch['img'],
-                    batch_idx=batch_idx,
-                    cls=cls,
-                    fname=self.save_dir / f'val_batch{ni}_pred_seg_grid8.jpg',
-                    names=self.names,
-                    on_plot=self.on_plot,
-                    seg_results=seg_results,
-                    res_grid_size=[8],
-                    enable_highlight=True
-                    )
+        # TODO: Seg visualization is incorrect
+        # pred_seg_obj, pred_seg_clsfy, Pi_list  = predictions[1]
+        # anchors, strides = self.get_anchors_and_strides(Pi_list=Pi_list)
+        # pred_seg = pred_seg_clsfy * (pred_seg_obj > 0.4).float()
+        # seg_results = (pred_seg, anchors, strides)
+        # plot_images(images=batch['img'],
+        #             batch_idx=batch_idx,
+        #             cls=cls,
+        #             fname=self.save_dir / f'val_batch{ni}_pred_seg_grid8.jpg',
+        #             names=self.names,
+        #             on_plot=self.on_plot,
+        #             seg_results=seg_results,
+        #             res_grid_size=[8],
+        #             enable_highlight=True
+        #)
