@@ -406,7 +406,7 @@ class PoseSegModel(PoseModel):
         B, _, img_H, img_W = img.shape
         anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
 
-        gt_bboxes_scaled = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_H, anchor_W, anchor_H, anchor_W]).to(gt_bboxes.device))) # T, 4
+        gt_bboxes_scaled = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_W, anchor_H, anchor_W, anchor_H]).to(gt_bboxes.device))) # T, 4
         bboxes_img = torch.zeros((B, self.nc, anchor_H, anchor_W), device=img.device) # B, C, H, W
 
         for d_i in range(gt_bboxes_scaled.shape[0]):
