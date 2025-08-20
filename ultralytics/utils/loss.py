@@ -392,13 +392,13 @@ class v8PoseLoss(v8DetectionLoss):
         """Calculate the total loss and detach it."""
         loss = torch.zeros(5, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
-        pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
+        batch_size = feats[0].shape[0]
+        pred_distri, pred_scores = torch.cat([xi.view(batch_size, self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1)
 
-        loss = self.calculate_bbox_kpt_loss(self, loss, batch, feats, pred_distri, pred_scores, pred_kpts)
+        loss = self.calculate_bbox_kpt_loss(loss, batch, feats, pred_distri, pred_scores, pred_kpts)
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
-    
 
     def calculate_bbox_kpt_loss(self, loss, batch, feats, pred_distri, pred_scores, pred_kpts):
         pred_scores = pred_scores.permute(0, 2, 1).contiguous()
@@ -413,7 +413,7 @@ class v8PoseLoss(v8DetectionLoss):
         batch_idx = batch['batch_idx'].view(-1, 1)
         targets = torch.cat((batch_idx, batch['cls'].view(-1, 1), batch['bboxes']), 1)
         targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
-        gt_labels, gt_bboxes = targets.split((1, 4), 2) # (B, T, 1), (B, T, 4)
+        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # (B, T, 1), (B, T, 4)
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
 
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # (B, h x w, 4(xyxy))
@@ -435,7 +435,7 @@ class v8PoseLoss(v8DetectionLoss):
 
             loss[1], loss[2] = self.calculate_keypoints_loss(fg_mask, target_gt_idx, keypoints, batch_idx,
                                                              stride_tensor, target_bboxes, pred_kpts, batch['ignore_kpt'])
-    
+
         loss[0] *= self.hyp.box  # box gain
         loss[1] *= self.hyp.pose  # pose gain
         loss[2] *= self.hyp.kobj  # kobj gain
@@ -537,11 +537,11 @@ class v8PoseSegLoss(v8PoseLoss):
         super().__init__(model)
         self.bce = nn.BCEWithLogitsLoss(reduction='none')
         self.seg_ch_num = model.model[-1].seg_ch_num
-    
+
     def prepare_preds(self, preds):
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         all_preds = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2)
-        pred_distri, pred_scores, pred_seg_obj0, pred_seg_obj1, pred_seg_cls = all_preds.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1) # B, S, A
+        pred_distri, pred_scores, pred_seg_obj0, pred_seg_obj1, pred_seg_cls = all_preds.split((self.reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)  # B, S, A
         return {
             self.PredE.FEAT: feats,
             self.PredE.DIST: pred_distri,
@@ -551,7 +551,7 @@ class v8PoseSegLoss(v8PoseLoss):
             self.PredE.SEG_OBJ1: pred_seg_obj1,
             self.PredE.SEG_CLS: pred_seg_cls
         }
-    
+
     def __call__(self, preds, batch):
         return NotImplementedError
 
@@ -573,7 +573,7 @@ class v8PSLSegObj(v8PoseSegLoss):
     '''
     Calculates the seg objectness loss.
     This class assumes that it is called with a combined_preds that the first half of the batch contains unshuffled labels
-    and the second half of the batch has shuffled labels. 
+    and the second half of the batch has shuffled labels.
     '''
     def __init__(self, model):
         super().__init__(model)
@@ -581,31 +581,31 @@ class v8PSLSegObj(v8PoseSegLoss):
     def __call__(self, preds, batch):
         loss = torch.zeros(2, device=self.device)
         preds_dict = self.prepare_preds(preds)
-        pred_seg_obj0, pred_seg_obj1 = preds_dict[self.PredE.SEG_OBJ0], preds_dict[self.PredE.SEG_OBJ1]        
+        pred_seg_obj0, pred_seg_obj1 = preds_dict[self.PredE.SEG_OBJ0], preds_dict[self.PredE.SEG_OBJ1]
         batch_size = pred_seg_obj0.shape[0]
         shuffled_len = batch['seg_obj0'].shape[0]
 
         loss[0] = self.calc_objectness_loss(
-            pred_seg_obj = pred_seg_obj0[shuffled_len:],
-            target_seg_obj = batch['seg_obj0']
+            pred_seg_obj=pred_seg_obj0[shuffled_len:],
+            target_seg_obj=batch['seg_obj0']
         )
         loss[1] = self.calc_objectness_loss(
-            pred_seg_obj = pred_seg_obj1[:shuffled_len],
-            target_seg_obj = batch['seg_obj1']
+            pred_seg_obj=pred_seg_obj1[:shuffled_len],
+            target_seg_obj=batch['seg_obj1']
         )
         return loss.sum() * batch_size, loss.detach()
-    
+
     def calc_objectness_loss(self, pred_seg_obj, target_seg_obj):
         target_seg_obj = target_seg_obj.flatten(start_dim=2)
         num_labeled_anchors = target_seg_obj.shape[2]
-        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
+        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors]  # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
         return loss_per_anchor.mean() * self.hyp.seg
 
 
 class v8PSLSegCls(v8PoseSegLoss):
     '''
-    Calculates the conditional seg cls loss. 
+    Calculates the conditional seg cls loss.
     '''
     def __init__(self, model):
         super().__init__(model)
@@ -613,11 +613,11 @@ class v8PSLSegCls(v8PoseSegLoss):
     def __call__(self, preds, batch):
         pred_seg_cls = self.prepare_preds(preds)[self.PredE.SEG_CLS]
         anchor_level_cls = batch['anchor_level_cls']
-        target_seg_cls = anchor_level_cls.flatten(start_dim=2) # B, C, A
+        target_seg_cls = anchor_level_cls.flatten(start_dim=2)  # B, C, A
         num_labeled_anchors = target_seg_cls.shape[2]
-        pred_seg_cls = pred_seg_cls[:, :, :num_labeled_anchors] # We only train the anchors with the highest resolution.
+        pred_seg_cls = pred_seg_cls[:, :, :num_labeled_anchors]  # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_cls, target_seg_cls)  # (B, C, A)
-        zero_mask = (target_seg_cls == 0).all(dim=1).unsqueeze(1) # B, 1, A
+        zero_mask = (target_seg_cls == 0).all(dim=1).unsqueeze(1)  # B, 1, A
         _, C, _ = pred_seg_cls.shape
         zero_mask_expanded = zero_mask.expand(-1, C, -1)
         loss_per_anchor[zero_mask_expanded] = 0
@@ -669,7 +669,7 @@ class v8PoseTunableHeadLoss(v8PoseLoss):
 
         # Cls loss
         # find index of image that has no gt_labes (nothing detected) and make bce loss for that index 0
-        loss[3] = torch.zeros((), device=self.device, dtype=dtype, requires_grad=True) 
+        loss[3] = torch.zeros((), device=self.device, dtype=dtype, requires_grad=True)
         for i, mask in enumerate(mask_gt):  # iterate over batch dim
             cls_loss = self.bce(pred_scores[i], target_scores[i].to(dtype)).sum()
             loss[3] += cls_loss if mask.sum() > 0 else cls_loss * 0.0  # don't update model if no gt bbox
@@ -694,7 +694,7 @@ class v8PoseTunableHeadLoss(v8PoseLoss):
         loss[4] *= self.hyp.dfl  # dfl gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
-    
+
 
 class v8PoseContrastiveLoss(v8PoseLoss):
     """Criterion class for computing training losses."""
@@ -737,7 +737,7 @@ class v8PoseContrastiveLoss(v8PoseLoss):
         # # Modify gt labels to have "0" labels for classification.
         # # BCE loss will do binary classification per each class (predicted label vs none) per detection.
         # # This is equivalent to Plant vs. None (background) classification.
-        # # This minimizes classification’s impact on generating embeddings 
+        # # This minimizes classification’s impact on generating embeddings
         # # while triplet loss is encouraging the model to distinguish one class from another.
         label_for_single_class_cls = 0
         gt_labels_single_class_cls = torch.full_like(gt_labels, label_for_single_class_cls)
@@ -848,7 +848,7 @@ class v8PoseContrastiveLoss(v8PoseLoss):
                 # take one index per row (target labels) where mask is True
                 selected_indices = torch.multinomial(probs, num_samples=1).squeeze(1)  # (n_samples,)
                 return selected_indices
-            
+
             # make triplets for each case
             """
                 crop-i, crop-i, weed-j (common)
@@ -978,9 +978,9 @@ class v8PoseMultiClsHeadsLoss(v8PoseLoss):
 
         # if no targets across the batch, multiply 0 to not affect training while allowing gradient flow in GradScaler backprop
         if gt_labels.shape[1] == 0:
-            zero_loss = abs(torch.zeros(self.n_losses, device=self.device)  * pred_scores.sum())
+            zero_loss = abs(torch.zeros(self.n_losses, device=self.device) * pred_scores.sum())
             return zero_loss.sum() * batch_size, zero_loss.detach()
-        
+
         # assign a classification head index to each image in the batch by reasoning on the very first target's class
         head_classes = gt_labels[:, 0].int().squeeze() // self.nc_per_head
 
@@ -994,7 +994,7 @@ class v8PoseMultiClsHeadsLoss(v8PoseLoss):
         # for each batch (B) & all anchors (N), drop all irrelevant classes (C) from classification predictions
         for b, c in enumerate(head_classes):  # each batch represents an image (and a corresponding cls head)
             c_offset = c * self.nc_per_head
-            pred_scores[b, :, 0:self.nc_per_head] = pred_scores[b, :, c_offset:c_offset+self.nc_per_head]  # bring classes the front
+            pred_scores[b, :, 0:self.nc_per_head] = pred_scores[b, :, c_offset:c_offset + self.nc_per_head]  # bring classes the front
         pred_scores = pred_scores[:, :, 0:self.nc_per_head]  # slice to keep only the classes of the head
 
         # target_bboxes: (B, N, 4), target_scores: (B, N, C), fg_mask: (B, N), target_gt_idx: (B, N)

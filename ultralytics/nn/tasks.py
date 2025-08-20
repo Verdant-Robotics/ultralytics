@@ -391,7 +391,7 @@ class PoseSegModel(PoseModel):
         min_stride = int(self.stride.min())
         img_H, img_W = batch['ori_shape'][0][0], batch['ori_shape'][0][1]        
         anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
-        anchor_shuffler =  Shuffler(tile_shape=(anchor_H, anchor_W), num_oper=self.args.shuffle_num)
+        anchor_shuffler = Shuffler(tile_shape=(anchor_H, anchor_W), num_oper=self.args.shuffle_num)
         img_shuffler = anchor_shuffler.scale((min_stride, min_stride))
         return anchor_shuffler, img_shuffler
 
@@ -406,8 +406,8 @@ class PoseSegModel(PoseModel):
         B, _, img_H, img_W = img.shape
         anchor_H, anchor_W = img_H // min_stride, img_W // min_stride
 
-        gt_bboxes_scaled = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_W, anchor_H, anchor_W, anchor_H]).to(gt_bboxes.device))) # T, 4
-        bboxes_img = torch.zeros((B, self.nc, anchor_H, anchor_W), device=img.device) # B, C, H, W
+        gt_bboxes_scaled = xywh2xyxy(gt_bboxes.mul(torch.Tensor([anchor_W, anchor_H, anchor_W, anchor_H]).to(gt_bboxes.device)))  # T, 4
+        bboxes_img = torch.zeros((B, self.nc, anchor_H, anchor_W), device=img.device)  # B, C, H, W
 
         for d_i in range(gt_bboxes_scaled.shape[0]):
             x1, y1, x2, y2 = gt_bboxes_scaled[d_i, :4]
@@ -433,14 +433,14 @@ class PoseSegModel(PoseModel):
             batch['anchor_level_cls'] = self.rasterize_boxes(img=batch['img'], gt_bboxes=batch['bboxes'], batch_idx=batch['batch_idx'], gt_cls=batch['cls'])
             box_kpt_loss = self.calc_box_kpt_loss(preds=preds, batch=batch)
             seg_cls_loss = self.calc_seg_cls_loss(preds=preds, batch=batch)
-            seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device) # Object loss can only be computed during training
+            seg_obj_loss_item = torch.Tensor([0]).to(seg_cls_loss[0].device)  # Object loss can only be computed during training
             loss_sum = box_kpt_loss[0] + seg_cls_loss[0]
-            loss_items =  torch.cat([box_kpt_loss[1], seg_obj_loss_item, seg_obj_loss_item, seg_cls_loss[1]]) # Order should match self.loss_names in pose_seg/train.py
+            loss_items = torch.cat([box_kpt_loss[1], seg_obj_loss_item, seg_obj_loss_item, seg_cls_loss[1]])  # Order should match self.loss_names in pose_seg/train.py
             return loss_sum, loss_items
 
         anchor_shuffler, img_shuffler = self.get_anchor_and_img_shuffler(batch)
         shuffled_img = img_shuffler.shuffle(batch['img'])
-        combined_img = torch.cat((batch['img'], shuffled_img), dim=0) # 2 x B, 3, H, W
+        combined_img = torch.cat((batch['img'], shuffled_img), dim=0)  # 2 x B, 3, H, W
         preds_combined = self.forward(combined_img)
 
         B, _, _, _ = batch['img'].shape
@@ -452,14 +452,14 @@ class PoseSegModel(PoseModel):
         box_kpt_loss = self.calc_box_kpt_loss(preds=(feats_unshuffled, pred_kpts_unshuffled), batch=batch)
         seg_cls_loss = self.calc_seg_cls_loss(preds=(feats_unshuffled, None), batch=batch)
         seg_obj_loss = self.calc_seg_obj_loss(
-            anchor_shuffler = anchor_shuffler,
-            shuffled_seg_obj_pred = feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)[2],
-            seg_obj_gt = batch['anchor_level_cls'].max(dim=1, keepdim=True).values,
+            anchor_shuffler=anchor_shuffler,
+            shuffled_seg_obj_pred=feats_combined[0][B:].split((self.model[-1].reg_max * 4, self.nc, 1, 1, self.seg_ch_num), 1)[2],
+            seg_obj_gt=batch['anchor_level_cls'].max(dim=1, keepdim=True).values,
             preds_combined=preds_combined
 
         )
         loss_sum = box_kpt_loss[0] + seg_cls_loss[0] + seg_obj_loss[0]
-        loss_items =  torch.cat([box_kpt_loss[1], seg_obj_loss[1], seg_cls_loss[1]]) # Order should match self.loss_names in pose_seg/train.py
+        loss_items = torch.cat([box_kpt_loss[1], seg_obj_loss[1], seg_cls_loss[1]])  # Order should match self.loss_names in pose_seg/train.py
         return loss_sum, loss_items
 
     def calc_box_kpt_loss(self, preds, batch):
@@ -469,12 +469,12 @@ class PoseSegModel(PoseModel):
         return self.criterion['seg_cls'](preds, batch)
 
     def calc_seg_obj_loss(self, anchor_shuffler, shuffled_seg_obj_pred, seg_obj_gt, preds_combined):
-        shuffled_seg_obj_gt = anchor_shuffler.shuffle(seg_obj_gt) # B, C, H, W
+        shuffled_seg_obj_gt = anchor_shuffler.shuffle(seg_obj_gt)  # B, C, H, W
         deshuffled_seg_obj = anchor_shuffler.unshuffle(shuffled_seg_obj_pred.detach()).sigmoid()
         deshuffled_seg_obj_pseudo_label = deshuffled_seg_obj * (seg_obj_gt > 0).float()
         batch = {
             'seg_obj0': shuffled_seg_obj_gt,
-            'seg_obj1': deshuffled_seg_obj_pseudo_label, 
+            'seg_obj1': deshuffled_seg_obj_pseudo_label,
         }
         return self.criterion['seg_obj'](preds_combined, batch)
 
