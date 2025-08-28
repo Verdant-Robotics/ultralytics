@@ -64,6 +64,5 @@ if __name__ == "__main__":
 
     print("Training completed. Exporting the model by converting checkpoints to ONNX format...")
     latest_weights_dir = GetLatestWeightsDir()
-    checkpoint_files = ["best.pt", "last.pt"]
-    for file in checkpoint_files:
-        Export(f"{latest_weights_dir}/{file}")  # export model checkpoints to onnx format
+    Export(f"{latest_weights_dir}/best.pt")
+    Export(f"{latest_weights_dir}/last.pt")
