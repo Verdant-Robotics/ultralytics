@@ -62,5 +62,7 @@ if __name__ == "__main__":
         patience=args.patience,
     )
 
+    print("Training completed. Exporting the model by converting checkpoints to ONNX format...")
     latest_weights_dir = GetLatestWeightsDir()
-    Export(f"{latest_weights_dir}/best.pt")  # To export the model to onnx format
+    Export(f"{latest_weights_dir}/best.pt")
+    Export(f"{latest_weights_dir}/last.pt")
