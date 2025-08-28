@@ -22,9 +22,14 @@ if __name__ == "__main__":
     parser.add_argument("-e", "--epochs", type=int, default=200, help="Number of epochs for training")
     parser.add_argument("-p", "--patience", type=int, default=50, help="Number of epochs triggering early stopping when no improvement")
     parser.add_argument("-s", "--batch-size", type=int, default=128, help="Batch size for training")
+    parser.add_argument("-w", "--model-ckpt", type=str, default="best.pt", help="model weight checkpoint (.pt) file to convert to ONNX; Options: best.pt & last.pt (optional, default: best.pt)")
     parser.add_argument("-b", "--disable-wandb", action="store_true", help="Disable wandb logging")
 
     args = parser.parse_args()
+
+    if args.model_ckpt not in ["best.pt", "last.pt"]:
+        print(f"[ERROR] : model-ckpt should be either best.pt or last.pt")
+        exit(1)
 
     print(f"Model weights initialized from: {args.load if args.load else 'scratch'}")
     print(f"Learning rate: {args.learning_rate}, Epochs: {args.epochs}, Patience: {args.patience}, Batch size: {args.batch_size}")
@@ -63,4 +68,4 @@ if __name__ == "__main__":
     )
 
     latest_weights_dir = GetLatestWeightsDir()
-    Export(f"{latest_weights_dir}/best.pt")  # To export the model to onnx format
+    Export(f"{latest_weights_dir}/{args.model_ckpt}")  # To export the model to onnx format
