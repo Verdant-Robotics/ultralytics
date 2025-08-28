@@ -569,40 +569,6 @@ class v8PSLPose(v8PoseSegLoss):
         return loss.sum() * batch_size, loss.detach()
 
 
-class v8PSLSegObj(v8PoseSegLoss):
-    '''
-    Calculates the seg objectness loss.
-    This class assumes that it is called with a combined_preds that the first half of the batch contains unshuffled labels
-    and the second half of the batch has shuffled labels.
-    '''
-    def __init__(self, model):
-        super().__init__(model)
-
-    def __call__(self, preds, batch):
-        loss = torch.zeros(2, device=self.device)
-        preds_dict = self.prepare_preds(preds)
-        pred_seg_obj0, pred_seg_obj1 = preds_dict[self.PredE.SEG_OBJ0], preds_dict[self.PredE.SEG_OBJ1]
-        batch_size = pred_seg_obj0.shape[0]
-        shuffled_len = batch['seg_obj0'].shape[0]
-
-        loss[0] = self.calc_objectness_loss(
-            pred_seg_obj=pred_seg_obj0[shuffled_len:],
-            target_seg_obj=batch['seg_obj0']
-        )
-        loss[1] = self.calc_objectness_loss(
-            pred_seg_obj=pred_seg_obj1[:shuffled_len],
-            target_seg_obj=batch['seg_obj1']
-        )
-        return loss.sum() * batch_size, loss.detach()
-
-    def calc_objectness_loss(self, pred_seg_obj, target_seg_obj):
-        target_seg_obj = target_seg_obj.flatten(start_dim=2)
-        num_labeled_anchors = target_seg_obj.shape[2]
-        pred_seg_obj = pred_seg_obj[:, :, :num_labeled_anchors]  # We only train the anchors with the highest resolution.
-        loss_per_anchor = self.bce(pred_seg_obj, target_seg_obj)
-        return loss_per_anchor.mean() * self.hyp.seg
-
-
 class v8PSLSegCls(v8PoseSegLoss):
     '''
     Calculates the conditional seg cls loss.
@@ -613,7 +579,9 @@ class v8PSLSegCls(v8PoseSegLoss):
     def __call__(self, preds, batch):
         pred_seg_cls = self.prepare_preds(preds)[self.PredE.SEG_CLS]
         anchor_level_cls = batch['anchor_level_cls']
-        target_seg_cls = anchor_level_cls.flatten(start_dim=2)  # B, C, A
+        target_seg_cls = torch.cat(
+            [x.flatten(start_dim=2) for x in anchor_level_cls], dim=2  # B, C, A
+        )
         num_labeled_anchors = target_seg_cls.shape[2]
         pred_seg_cls = pred_seg_cls[:, :, :num_labeled_anchors]  # We only train the anchors with the highest resolution.
         loss_per_anchor = self.bce(pred_seg_cls, target_seg_cls)  # (B, C, A)
